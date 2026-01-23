@@ -26,6 +26,9 @@ use zellij_utils::{
     pane_size::SizeInPixels,
 };
 
+const HEARTBEAT_INTERVAL_SECS: u64 = 30;
+const HEARTBEAT_TIMEOUT_SECS: u64 = 45;
+
 pub async fn ws_handler_control(
     ws: WebSocketUpgrade,
     _path: Option<AxumPath<String>>,
@@ -64,6 +67,43 @@ async fn handle_ws_control(
         serde_json::to_string(&set_config_msg).unwrap().into(),
     ));
 
+    // Track last heartbeat response time (shared with heartbeat task)
+    let last_heartbeat_response = Arc::new(AtomicU64::new(current_timestamp()));
+    let heartbeat_cancellation = CancellationToken::new();
+
+    // Spawn heartbeat sender task
+    let heartbeat_tx = control_channel_tx.clone();
+    let heartbeat_last_response = last_heartbeat_response.clone();
+    let heartbeat_cancel = heartbeat_cancellation.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
+        loop {
+            tokio::select! {
+                _ = heartbeat_cancel.cancelled() => {
+                    break;
+                }
+                _ = interval.tick() => {
+                    let now = current_timestamp();
+                    let last_response = heartbeat_last_response.load(Ordering::Relaxed);
+
+                    // Check if client has timed out
+                    if now.saturating_sub(last_response) > HEARTBEAT_TIMEOUT_SECS {
+                        log::warn!("WebSocket control connection timed out (no heartbeat response)");
+                        break;
+                    }
+
+                    // Send heartbeat
+                    let heartbeat_msg = WebServerToWebClientControlMessage::Heartbeat { timestamp: now };
+                    if heartbeat_tx.send(Message::Text(
+                        serde_json::to_string(&heartbeat_msg).unwrap().into(),
+                    )).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
     let send_message_to_server = |deserialized_msg: WebClientToWebServerControlMessage| {
         let Some(client_connection) = state
             .connection_table
@@ -75,9 +115,13 @@ async fn handle_ws_control(
             log::error!("Unknown web_client_id: {}", deserialized_msg.web_client_id);
             return;
         };
-        let client_msg = match deserialized_msg.payload {
+        let client_msg = match &deserialized_msg.payload {
             WebClientToWebServerControlMessagePayload::TerminalResize(size) => {
-                ClientToServerMsg::TerminalResize { new_size: size }
+                ClientToServerMsg::TerminalResize { new_size: *size }
+            },
+            WebClientToWebServerControlMessagePayload::HeartbeatResponse { .. } => {
+                // Heartbeat responses are handled separately, not forwarded to server
+                return;
             },
             WebClientToWebServerControlMessagePayload::TerminalMetrics(metrics) => {
                 terminal_metrics_to_ipc(metrics)
@@ -126,6 +170,15 @@ async fn handle_ws_control(
                                     control_channel_tx.clone(),
                                 );
                         }
+                        // Handle heartbeat response
+                        if let WebClientToWebServerControlMessagePayload::HeartbeatResponse {
+                            ..
+                        } = &deserialized_msg.payload
+                        {
+                            last_heartbeat_response
+                                .store(current_timestamp(), Ordering::Relaxed);
+                        }
+
                         // Throttle resize messages to prevent flooding the
                         // server during rapid browser window resizing.
                         if matches!(
@@ -147,6 +200,7 @@ async fn handle_ws_control(
                 }
             },
             Message::Close(_) => {
+                heartbeat_cancellation.cancel();
                 return;
             },
             _ => {
@@ -154,6 +208,8 @@ async fn handle_ws_control(
             },
         }
     }
+
+    heartbeat_cancellation.cancel();
 }
 
 async fn handle_ws_terminal(

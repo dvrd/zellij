@@ -13,6 +13,7 @@ pub struct WebClientToWebServerControlMessage {
 pub enum WebClientToWebServerControlMessagePayload {
     TerminalResize(Size),
     TerminalMetrics(TerminalMetricsPayload),
+    HeartbeatResponse { timestamp: u64 },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -31,6 +32,7 @@ pub enum WebServerToWebClientControlMessage {
     Log { lines: Vec<String> },
     LogError { lines: Vec<String> },
     SwitchedSession { new_session_name: String },
+    Heartbeat { timestamp: u64 },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
