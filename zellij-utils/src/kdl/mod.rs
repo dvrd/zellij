@@ -2782,6 +2782,9 @@ impl Options {
         let web_server_port =
             kdl_property_first_arg_as_i64_or_error!(kdl_options, "web_server_port")
                 .map(|(web_server_port, _entry)| web_server_port as u16);
+        let web_heartbeat_timeout_secs =
+            kdl_property_first_arg_as_i64_or_error!(kdl_options, "web_heartbeat_timeout_secs")
+                .map(|(web_heartbeat_timeout_secs, _entry)| web_heartbeat_timeout_secs as u64);
         let web_server_cert =
             kdl_property_first_arg_as_string_or_error!(kdl_options, "web_server_cert")
                 .map(|(string, _entry)| PathBuf::from(string));
@@ -2859,6 +2862,7 @@ impl Options {
             mouse_click_through,
             web_server_ip,
             web_server_port,
+            web_heartbeat_timeout_secs,
             web_server_cert,
             web_server_key,
             enforce_https_for_localhost,
@@ -3825,6 +3829,35 @@ impl Options {
             None
         }
     }
+    fn web_heartbeat_timeout_secs_to_kdl(&self, add_comments: bool) -> Option<KdlNode> {
+        let comment_text = format!(
+            "{}\n{}\n{}\n{}\n{}",
+            "// How long to wait for a web/remote client heartbeat response before closing the control connection",
+            "// Set to 0 to disable the automatic timeout",
+            "// Default: 45",
+            "// (Requires restart)",
+            "// ",
+        );
+
+        let create_node = |node_value: u64| -> KdlNode {
+            let mut node = KdlNode::new("web_heartbeat_timeout_secs");
+            node.push(KdlValue::Base10(node_value as i64));
+            node
+        };
+        if let Some(web_heartbeat_timeout_secs) = self.web_heartbeat_timeout_secs {
+            let mut node = create_node(web_heartbeat_timeout_secs);
+            if add_comments {
+                node.set_leading(format!("{}\n", comment_text));
+            }
+            Some(node)
+        } else if add_comments {
+            let mut node = create_node(45);
+            node.set_leading(format!("{}\n// ", comment_text));
+            Some(node)
+        } else {
+            None
+        }
+    }
     fn enforce_https_for_localhost_to_kdl(&self, add_comments: bool) -> Option<KdlNode> {
         let comment_text = format!(
             "{}\n{}\n{}\n{}\n{}\n{}\n{}",
@@ -4315,6 +4348,11 @@ impl Options {
         }
         if let Some(web_server_port) = self.web_server_port_to_kdl(add_comments) {
             nodes.push(web_server_port);
+        }
+        if let Some(web_heartbeat_timeout_secs) =
+            self.web_heartbeat_timeout_secs_to_kdl(add_comments)
+        {
+            nodes.push(web_heartbeat_timeout_secs);
         }
         if let Some(post_command_discovery_hook) =
             self.post_command_discovery_hook_to_kdl(add_comments)

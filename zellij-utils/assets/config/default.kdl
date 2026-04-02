@@ -499,6 +499,13 @@ load_plugins {
 //
 // web_server_port 8082
 
+// How long to wait for a web/remote client heartbeat response before closing the control connection
+// Set to 0 to disable the automatic timeout
+// Default: 45
+// (Requires restart)
+//
+// web_heartbeat_timeout_secs 45
+
 // Whether to stack panes when resizing beyond a certain size
 // Default: true
 //

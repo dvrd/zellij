@@ -253,6 +253,10 @@ pub struct Options {
     // configuration file
     pub web_server_ip: Option<IpAddr>,
     pub web_server_port: Option<u16>,
+    /// How long to wait for a web/remote client heartbeat response before closing the control
+    /// connection. Set to 0 to disable automatic timeout.
+    #[clap(long, value_parser)]
+    pub web_heartbeat_timeout_secs: Option<u64>,
     pub web_server_cert: Option<PathBuf>,
     pub web_server_key: Option<PathBuf>,
     pub enforce_https_for_localhost: Option<bool>,
@@ -359,6 +363,9 @@ impl Options {
         let mouse_click_through = other.mouse_click_through.or(self.mouse_click_through);
         let web_server_ip = other.web_server_ip.or(self.web_server_ip);
         let web_server_port = other.web_server_port.or(self.web_server_port);
+        let web_heartbeat_timeout_secs = other
+            .web_heartbeat_timeout_secs
+            .or(self.web_heartbeat_timeout_secs);
         let web_server_cert = other
             .web_server_cert
             .or_else(|| self.web_server_cert.clone());
@@ -414,6 +421,7 @@ impl Options {
             mouse_click_through,
             web_server_ip,
             web_server_port,
+            web_heartbeat_timeout_secs,
             web_server_cert,
             web_server_key,
             enforce_https_for_localhost,
@@ -490,6 +498,9 @@ impl Options {
         let mouse_click_through = merge_bool(other.mouse_click_through, self.mouse_click_through);
         let web_server_ip = other.web_server_ip.or(self.web_server_ip);
         let web_server_port = other.web_server_port.or(self.web_server_port);
+        let web_heartbeat_timeout_secs = other
+            .web_heartbeat_timeout_secs
+            .or(self.web_heartbeat_timeout_secs);
         let web_server_cert = other
             .web_server_cert
             .or_else(|| self.web_server_cert.clone());
@@ -545,6 +556,7 @@ impl Options {
             mouse_click_through,
             web_server_ip,
             web_server_port,
+            web_heartbeat_timeout_secs,
             web_server_cert,
             web_server_key,
             enforce_https_for_localhost,
