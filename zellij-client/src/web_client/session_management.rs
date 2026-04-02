@@ -48,11 +48,14 @@ pub fn spawn_new_session(
     session_name: &str,
     mut os_input: Box<dyn ClientOsApi>,
     zellij_ipc_pipe: &PathBuf,
-) {
+) -> Result<(), std::io::Error> {
     let debug = false;
     envs::set_session_name(session_name.to_owned());
     os_input.update_session_name(session_name.to_owned());
-    spawn_server(&*zellij_ipc_pipe, debug).unwrap();
+    spawn_server(&*zellij_ipc_pipe, debug).map_err(|e| {
+        log::error!("Failed to spawn server for session '{}': {:?}", session_name, e);
+        e
+    })
 }
 
 pub fn create_first_message(

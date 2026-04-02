@@ -2701,7 +2701,7 @@ impl SessionManager for MockSessionManager {
         session_exists: bool,
         _zellij_ipc_pipe: &PathBuf,
         first_message: ClientToServerMsg,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Track the message that was sent
         self.first_messages_sent
             .lock()
@@ -2714,6 +2714,7 @@ impl SessionManager for MockSessionManager {
                 .unwrap()
                 .insert(session_name.to_owned());
         }
+        Ok(())
     }
 }
 

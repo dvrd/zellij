@@ -41,7 +41,7 @@ pub trait SessionManager: Send + Sync + std::fmt::Debug {
         session_exists: bool,
         zellij_ipc_pipe: &PathBuf,
         first_message: ClientToServerMsg,
-    );
+    ) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 #[derive(Debug, Clone)]
@@ -69,12 +69,13 @@ impl SessionManager for RealSessionManager {
         session_exists: bool,
         zellij_ipc_pipe: &PathBuf,
         first_message: ClientToServerMsg,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if !session_exists {
-            spawn_new_session(session_name, os_input.clone(), zellij_ipc_pipe);
+            spawn_new_session(session_name, os_input.clone(), zellij_ipc_pipe)?;
         }
         os_input.connect_to_server(&zellij_ipc_pipe);
         os_input.send_to_server(first_message);
+        Ok(())
     }
 }
 
@@ -134,6 +135,7 @@ pub struct ClientConnectionBus {
     pub stdout_channel_tx: Option<UnboundedSender<String>>,
     pub control_channel_tx: Option<UnboundedSender<Message>>,
     pub web_client_id: String,
+    pub pending_control_messages: Vec<Message>,
 }
 
 impl ClientConnectionBus {
@@ -152,6 +154,7 @@ impl ClientConnectionBus {
             stdout_channel_tx,
             control_channel_tx,
             web_client_id,
+            pending_control_messages: Vec::new(),
         }
     }
 }

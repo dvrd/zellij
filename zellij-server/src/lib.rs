@@ -1148,7 +1148,7 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                             .unwrap()
                             .senders
                             .send_to_screen(ScreenInstruction::TerminalResize(min_size))
-                            .unwrap();
+                            .unwrap_or_else(|e| log::error!("Failed to send to screen: {:?}", e));
                     }
                     session_data
                         .write()
@@ -1157,7 +1157,7 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                         .unwrap()
                         .senders
                         .send_to_screen(ScreenInstruction::RemoveClient(client_id))
-                        .unwrap();
+                        .unwrap_or_else(|e| log::error!("Failed to send to screen: {:?}", e));
                     session_data
                         .write()
                         .unwrap()
@@ -1165,7 +1165,7 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                         .unwrap()
                         .senders
                         .send_to_plugin(PluginInstruction::RemoveClient(client_id))
-                        .unwrap();
+                        .unwrap_or_else(|e| log::error!("Failed to send to plugin: {:?}", e));
                     if !session_state.read().unwrap().active_clients_are_connected() {
                         *session_data.write().unwrap() = None;
                         let client_ids_to_cleanup: Vec<ClientId> = session_state
@@ -1222,7 +1222,7 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                             .unwrap()
                             .senders
                             .send_to_screen(ScreenInstruction::TerminalResize(min_size))
-                            .unwrap();
+                            .unwrap_or_else(|e| log::error!("Failed to send to screen: {:?}", e));
                     }
                     session_data
                         .write()
@@ -1231,7 +1231,7 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                         .unwrap()
                         .senders
                         .send_to_screen(ScreenInstruction::RemoveClient(client_id))
-                        .unwrap();
+                        .unwrap_or_else(|e| log::error!("Failed to send to screen: {:?}", e));
                     session_data
                         .write()
                         .unwrap()
@@ -1239,7 +1239,7 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                         .unwrap()
                         .senders
                         .send_to_plugin(PluginInstruction::RemoveClient(client_id))
-                        .unwrap();
+                        .unwrap_or_else(|e| log::error!("Failed to send to plugin: {:?}", e));
                 }
             },
             ServerInstruction::SendWebClientsForbidden(client_id) => {
@@ -1258,7 +1258,7 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                         .unwrap()
                         .senders
                         .send_to_screen(ScreenInstruction::TerminalResize(min_size))
-                        .unwrap();
+                        .unwrap_or_else(|e| log::error!("Failed to send to screen: {:?}", e));
                 }
             },
             ServerInstruction::KillSession => {
@@ -1715,6 +1715,14 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
     *session_data.write().unwrap() = None;
 
     drop(std::fs::remove_file(&socket_path));
+
+    // Give background threads (PTY, screen, plugins, web server_listener) a short
+    // window to notice the closed channels and IPC socket and exit on their own.
+    // If they don't finish in time we force-exit so the process doesn't hang.
+    // TODO: collect JoinHandles from all spawned threads and join/abort them here
+    // for a proper graceful shutdown instead of relying on the timeout.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::process::exit(0);
 }
 
 fn init_session(
