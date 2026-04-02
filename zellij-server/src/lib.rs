@@ -1716,8 +1716,12 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
 
     drop(std::fs::remove_file(&socket_path));
 
-    // Ensure the server process exits cleanly even if background threads are still alive.
-    // Without this, threads like server_listener can keep the process alive as a zombie.
+    // Give background threads (PTY, screen, plugins, web server_listener) a short
+    // window to notice the closed channels and IPC socket and exit on their own.
+    // If they don't finish in time we force-exit so the process doesn't hang.
+    // TODO: collect JoinHandles from all spawned threads and join/abort them here
+    // for a proper graceful shutdown instead of relying on the timeout.
+    std::thread::sleep(std::time::Duration::from_millis(500));
     std::process::exit(0);
 }
 

@@ -565,11 +565,11 @@ pub async fn run_remote_client_terminal_loop(
                             Ok(WebServerToWebClientControlMessage::SwitchedSession{ .. }) => {
                                 // no-op
                             }
-                            Ok(WebServerToWebClientControlMessage::Heartbeat { timestamp }) => {
+                            Ok(WebServerToWebClientControlMessage::Heartbeat { timestamp: _ }) => {
                                 let response = Message::Text(
                                     serde_json::to_string(&WebClientToWebServerControlMessage {
                                         web_client_id: connections.web_client_id.clone(),
-                                        payload: WebClientToWebServerControlMessagePayload::HeartbeatResponse { timestamp },
+                                        payload: WebClientToWebServerControlMessagePayload::HeartbeatResponse,
                                     })
                                     .unwrap(),
                                 );
