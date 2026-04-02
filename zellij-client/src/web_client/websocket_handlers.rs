@@ -27,7 +27,15 @@ use zellij_utils::{
 };
 
 const HEARTBEAT_INTERVAL_SECS: u64 = 30;
-const HEARTBEAT_TIMEOUT_SECS: u64 = 45;
+const DEFAULT_HEARTBEAT_TIMEOUT_SECS: u64 = 45;
+
+fn heartbeat_timed_out(heartbeat_timeout_secs: Option<u64>, now: u64, last_response: u64) -> bool {
+    match heartbeat_timeout_secs {
+        Some(0) => false,
+        Some(timeout_secs) => now.saturating_sub(last_response) > timeout_secs,
+        None => now.saturating_sub(last_response) > DEFAULT_HEARTBEAT_TIMEOUT_SECS,
+    }
+}
 
 pub async fn ws_handler_control(
     ws: WebSocketUpgrade,
@@ -69,6 +77,12 @@ async fn handle_ws_control(
 
     // Track last heartbeat response time (shared with heartbeat task)
     let last_heartbeat_response = Arc::new(AtomicU64::new(current_timestamp()));
+    let heartbeat_timeout_secs = state
+        .config
+        .lock()
+        .unwrap()
+        .options
+        .web_heartbeat_timeout_secs;
     let heartbeat_cancellation = CancellationToken::new();
 
     // Spawn heartbeat sender task
@@ -76,7 +90,8 @@ async fn handle_ws_control(
     let heartbeat_last_response = last_heartbeat_response.clone();
     let heartbeat_cancel = heartbeat_cancellation.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
+        let mut interval =
+            tokio::time::interval(tokio::time::Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
         loop {
             tokio::select! {
                 _ = heartbeat_cancel.cancelled() => {
@@ -87,7 +102,7 @@ async fn handle_ws_control(
                     let last_response = heartbeat_last_response.load(Ordering::Relaxed);
 
                     // Check if client has timed out — drop tx to signal close to main loop
-                    if now.saturating_sub(last_response) > HEARTBEAT_TIMEOUT_SECS {
+                    if heartbeat_timed_out(heartbeat_timeout_secs, now, last_response) {
                         log::warn!("WebSocket control connection timed out (no heartbeat response)");
                         drop(heartbeat_tx);
                         break;
@@ -474,9 +489,6 @@ mod tests {
 
     #[test]
     fn terminal_metrics_round_trips_through_json_payload() {
-        // The browser sends this message as JSON over the control
-        // socket. Verify that the on-wire shape deserializes into the
-        // variant we route into terminal_metrics_to_ipc.
         let raw = serde_json::json!({
             "web_client_id": "abc",
             "payload": {
@@ -501,9 +513,6 @@ mod tests {
 
     #[test]
     fn terminal_resize_still_deserializes_after_adding_variant() {
-        // Regression guard for the new enum variant: the existing
-        // TerminalResize wire shape must continue to parse unchanged
-        // (no `type` rename, no required-field changes).
         let raw = serde_json::json!({
             "web_client_id": "abc",
             "payload": {
@@ -521,5 +530,22 @@ mod tests {
             },
             other => panic!("expected TerminalResize, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn heartbeat_timeout_defaults_to_45_seconds() {
+        assert!(!heartbeat_timed_out(None, 45, 1));
+        assert!(heartbeat_timed_out(None, 47, 1));
+    }
+
+    #[test]
+    fn heartbeat_timeout_can_be_disabled_with_zero() {
+        assert!(!heartbeat_timed_out(Some(0), 10_000, 1));
+    }
+
+    #[test]
+    fn heartbeat_timeout_uses_custom_value_when_configured() {
+        assert!(!heartbeat_timed_out(Some(120), 200, 100));
+        assert!(heartbeat_timed_out(Some(120), 221, 100));
     }
 }

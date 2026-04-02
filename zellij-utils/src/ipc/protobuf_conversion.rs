@@ -821,6 +821,7 @@ impl TryFrom<crate::client_server_contract::client_server_contract::Options>
                 .transpose()
                 .map_err(|e| anyhow!("Invalid IP address: {}", e))?,
             web_server_port: options.web_server_port.map(|p| p as u16),
+            web_heartbeat_timeout_secs: None,
             web_server_cert: options.web_server_cert.map(std::path::PathBuf::from),
             web_server_key: options.web_server_key.map(std::path::PathBuf::from),
             enforce_https_for_localhost: options.enforce_https_for_localhost,
