@@ -11,7 +11,7 @@ use std::sync::{
 use zellij_utils::{
     input::{actions::Action, cast_termwiz_key, mouse::MouseEvent},
     ipc::ClientToServerMsg,
-    vendored::termwiz::input::{InputEvent, InputParser},
+    vendored::termwiz::input::{InputEvent, InputParser, KeyCodeEncodeModes, KeyboardEncoding},
 };
 
 /// Per-WebSocket-connection parsing state. Owns the Kitty and termwiz
@@ -206,6 +206,22 @@ pub fn send_control_messages_to_client(
     });
 }
 
+fn raw_bytes_for_web_key_event(
+    key_event: &zellij_utils::vendored::termwiz::input::KeyEvent,
+) -> Vec<u8> {
+    let encode_modes = KeyCodeEncodeModes {
+        encoding: KeyboardEncoding::Xterm,
+        newline_mode: false,
+        application_cursor_keys: false,
+        modify_other_keys: None,
+    };
+    key_event
+        .key
+        .encode(key_event.modifiers, encode_modes, true)
+        .unwrap_or_default()
+        .into_bytes()
+}
+
 pub fn parse_stdin(
     buf: &[u8],
     os_input: Box<dyn ClientOsApi>,
@@ -239,24 +255,16 @@ pub fn parse_stdin(
         maybe_more,
     );
 
-    let single_event = events.len() == 1;
+    let has_multiple_events = events.len() > 1;
     for (_i, input_event) in events.into_iter().enumerate() {
         match input_event {
             InputEvent::Key(key_event) => {
                 // For multi-event buffers (e.g. IME composition), avoid
                 // duplicating the full buffer for each unmodified Char event.
-                // Non-Char or modified keys still use the original buffer.
-                let raw_bytes = if single_event {
-                    buf.to_vec()
+                let raw_bytes = if has_multiple_events {
+                    raw_bytes_for_web_key_event(&key_event)
                 } else {
-                    use zellij_utils::vendored::termwiz::input::{KeyCode, Modifiers};
-                    match (&key_event.key, key_event.modifiers) {
-                        (KeyCode::Char(c), m) if m == Modifiers::NONE => {
-                            let mut char_buf = [0u8; 4];
-                            c.encode_utf8(&mut char_buf).as_bytes().to_vec()
-                        },
-                        _ => buf.to_vec(),
-                    }
+                    buf.to_vec()
                 };
                 let key = cast_termwiz_key(key_event.clone(), &raw_bytes, None);
                 os_input.send_to_server(ClientToServerMsg::Key {
@@ -483,5 +491,106 @@ mod tests {
                 other => panic!("expected Key, got {other:?}"),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Result;
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+    use zellij_utils::{
+        data::Palette,
+        errors::ErrorContext,
+        ipc::{ClientToServerMsg, ServerToClientMsg},
+        pane_size::Size,
+    };
+
+    #[derive(Debug, Clone)]
+    struct MockClientOsApi {
+        messages_to_server: Arc<Mutex<Vec<ClientToServerMsg>>>,
+        messages_from_server: Arc<Mutex<VecDeque<(ServerToClientMsg, ErrorContext)>>>,
+    }
+
+    impl MockClientOsApi {
+        fn new() -> Self {
+            Self {
+                messages_to_server: Arc::new(Mutex::new(Vec::new())),
+                messages_from_server: Arc::new(Mutex::new(VecDeque::new())),
+            }
+        }
+
+        fn get_sent_messages(&self) -> Vec<ClientToServerMsg> {
+            self.messages_to_server.lock().unwrap().clone()
+        }
+    }
+
+    impl ClientOsApi for MockClientOsApi {
+        fn get_terminal_size(&self) -> Size {
+            Size { rows: 24, cols: 80 }
+        }
+        fn set_raw_mode(&mut self) {}
+        fn unset_raw_mode(&self) -> Result<(), std::io::Error> {
+            Ok(())
+        }
+        fn get_stdout_writer(&self) -> Box<dyn std::io::Write> {
+            Box::new(std::io::sink())
+        }
+        fn get_stdin_reader(&self) -> Box<dyn std::io::BufRead> {
+            Box::new(std::io::Cursor::new(Vec::new()))
+        }
+        fn update_session_name(&mut self, _new_session_name: String) {}
+        fn read_from_stdin(&mut self) -> Result<Vec<u8>, &'static str> {
+            Ok(Vec::new())
+        }
+        fn box_clone(&self) -> Box<dyn ClientOsApi> {
+            Box::new(self.clone())
+        }
+        fn send_to_server(&self, msg: ClientToServerMsg) {
+            self.messages_to_server.lock().unwrap().push(msg);
+        }
+        fn recv_from_server(&self) -> Option<(ServerToClientMsg, ErrorContext)> {
+            self.messages_from_server.lock().unwrap().pop_front()
+        }
+        fn handle_signals(
+            &self,
+            _sigwinch_cb: Box<dyn Fn()>,
+            _quit_cb: Box<dyn Fn()>,
+            _resize_receiver: Option<std::sync::mpsc::Receiver<()>>,
+        ) {
+        }
+        fn connect_to_server(&self, _path: &std::path::Path) {}
+        fn load_palette(&self) -> Palette {
+            Palette::default()
+        }
+        fn enable_mouse(&self) -> Result<()> {
+            Ok(())
+        }
+        fn disable_mouse(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn parse_stdin_splits_raw_bytes_for_multi_key_text_frames() {
+        let mock_os_input = MockClientOsApi::new();
+        let verification_handle = mock_os_input.clone();
+        let mut mouse_old_event = MouseEvent::new();
+
+        parse_stdin(b"abc", Box::new(mock_os_input), &mut mouse_old_event, true);
+
+        let messages = verification_handle.get_sent_messages();
+        assert_eq!(messages.len(), 3);
+
+        let raw_bytes: Vec<Vec<u8>> = messages
+            .into_iter()
+            .map(|msg| match msg {
+                ClientToServerMsg::Key { raw_bytes, .. } => raw_bytes,
+                other => panic!("expected key message, got: {:?}", other),
+            })
+            .collect();
+
+        assert_eq!(raw_bytes, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
     }
 }
