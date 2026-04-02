@@ -1,0 +1,23 @@
+name: Protect main
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-source-branch:
+    name: Verify PR comes from dev or upstream sync
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check source branch
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "PR source branch: $HEAD_REF"
+          if [[ "$HEAD_REF" == "dev" || "$HEAD_REF" == upstream/* || "$HEAD_REF" == sync/* ]]; then
+            echo "✓ Allowed source branch: $HEAD_REF"
+          else
+            echo "✗ PRs to main must come from 'dev' or an 'upstream/*' / 'sync/*' branch."
+            echo "  Merge your changes into 'dev' first, then open a PR from dev → main."
+            exit 1
+          fi
