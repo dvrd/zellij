@@ -90,9 +90,10 @@ async fn handle_ws_control(
                     let now = current_timestamp();
                     let last_response = heartbeat_last_response.load(Ordering::Relaxed);
 
-                    // Check if client has timed out
+                    // Check if client has timed out — drop tx to signal close to main loop
                     if now.saturating_sub(last_response) > HEARTBEAT_TIMEOUT_SECS {
                         log::warn!("WebSocket control connection timed out (no heartbeat response)");
+                        drop(heartbeat_tx);
                         break;
                     }
 
@@ -123,7 +124,7 @@ async fn handle_ws_control(
             WebClientToWebServerControlMessagePayload::TerminalResize(size) => {
                 ClientToServerMsg::TerminalResize { new_size: *size }
             },
-            WebClientToWebServerControlMessagePayload::HeartbeatResponse { .. } => {
+            WebClientToWebServerControlMessagePayload::HeartbeatResponse => {
                 // Heartbeat responses are handled separately, not forwarded to server
                 return;
             },
@@ -137,6 +138,8 @@ async fn handle_ws_control(
     // native client's SIGWINCH_CB_THROTTLE_DURATION of 50ms.
     const RESIZE_THROTTLE_DURATION: Duration = Duration::from_millis(50);
     let mut last_resize_at: Option<Instant> = None;
+    // Abort handle for the trailing-resize task scheduled during throttle bursts.
+    let mut pending_resize_abort: Option<tokio::task::AbortHandle> = None;
 
     while let Some(Ok(msg)) = control_socket_rx.next().await {
         match msg {
@@ -176,14 +179,39 @@ async fn handle_ws_control(
                             last_heartbeat_response.store(current_timestamp(), Ordering::Relaxed);
                         }
 
-                        // Throttle resize messages to prevent flooding the
-                        // server during rapid browser window resizing.
+                        // Debounce resize messages: send immediately on leading edge, then
+                        // schedule a trailing send for the final resize in a burst so the
+                        // terminal never stays stuck at a stale size.
                         if matches!(
                             deserialized_msg.payload,
                             WebClientToWebServerControlMessagePayload::TerminalResize(_)
                         ) {
+                            // Cancel any previously scheduled trailing resize.
+                            if let Some(handle) = pending_resize_abort.take() {
+                                handle.abort();
+                            }
                             if let Some(last) = last_resize_at {
                                 if last.elapsed() < RESIZE_THROTTLE_DURATION {
+                                    // Schedule a trailing send after the throttle window.
+                                    let state_clone = state.clone();
+                                    let msg_clone = deserialized_msg.clone();
+                                    let task = tokio::spawn(async move {
+                                        tokio::time::sleep(RESIZE_THROTTLE_DURATION).await;
+                                        if let WebClientToWebServerControlMessagePayload::TerminalResize(size) = msg_clone.payload {
+                                            if let Some(client_connection) = state_clone
+                                                .connection_table
+                                                .lock()
+                                                .unwrap()
+                                                .get_client_os_api(&msg_clone.web_client_id)
+                                                .cloned()
+                                            {
+                                                let _ = client_connection.send_to_server(
+                                                    ClientToServerMsg::TerminalResize { new_size: size },
+                                                );
+                                            }
+                                        }
+                                    });
+                                    pending_resize_abort = Some(task.abort_handle());
                                     continue;
                                 }
                             }
@@ -198,6 +226,9 @@ async fn handle_ws_control(
             },
             Message::Close(_) => {
                 heartbeat_cancellation.cancel();
+                if let Some(handle) = pending_resize_abort.take() {
+                    handle.abort();
+                }
                 return;
             },
             _ => {

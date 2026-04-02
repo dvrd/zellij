@@ -103,7 +103,6 @@ export function initWebSockets(
     };
 
     // Update sendAnsiKey to use the actual WebSocket
-    const originalSendAnsiKey = sendAnsiKey;
     sendAnsiKey = (ansiKey) => {
         if (ownWebClientId !== "") {
             wsTerminal.send(ansiKey);
@@ -163,10 +162,7 @@ function startWsControl(wsControl, term, fitAddon, ownWebClientId, userConfig) {
             wsControl.send(
                 JSON.stringify({
                     web_client_id: ownWebClientId,
-                    payload: {
-                        type: "HeartbeatResponse",
-                        timestamp: msg.timestamp,
-                    },
+                    payload: { type: "HeartbeatResponse" },
                 })
             );
             return;
@@ -182,18 +178,18 @@ function startWsControl(wsControl, term, fitAddon, ownWebClientId, userConfig) {
             } = msg;
             term.options.fontFamily = font;
             term.options.theme = theme;
-            if (cursor_blink !== "undefined") {
+            if (cursor_blink !== undefined && cursor_blink !== null) {
                 term.options.cursorBlink = cursor_blink;
                 userConfig.blink = true;
             }
-            if (mac_option_is_meta !== "undefined") {
+            if (mac_option_is_meta !== undefined && mac_option_is_meta !== null) {
                 term.options.macOptionIsMeta = mac_option_is_meta;
             }
-            if (cursor_style !== "undefined") {
+            if (cursor_style !== undefined && cursor_style !== null) {
                 term.options.cursorStyle = cursor_style;
                 userConfig.style = true;
             }
-            if (cursor_inactive_style !== "undefined") {
+            if (cursor_inactive_style !== undefined && cursor_inactive_style !== null) {
                 term.options.cursorInactiveStyle = cursor_inactive_style;
             }
             const body = document.querySelector("body");
@@ -226,6 +222,10 @@ function startWsControl(wsControl, term, fitAddon, ownWebClientId, userConfig) {
             );
         } else if (msg.type === "QueryTerminalSize") {
             const fitDimensions = fitAddon.proposeDimensions();
+            if (fitDimensions === undefined) {
+                console.warn("failed to get fit dimensions for QueryTerminalSize");
+                return;
+            }
             const { rows, cols } = fitDimensions;
             if (rows !== term.rows || cols !== term.cols) {
                 term.resize(cols, rows);
@@ -242,12 +242,12 @@ function startWsControl(wsControl, term, fitAddon, ownWebClientId, userConfig) {
             );
         } else if (msg.type === "Log") {
             const { lines } = msg;
-            for (const line in lines) {
+            for (const line of lines) {
                 console.log(line);
             }
         } else if (msg.type === "LogError") {
             const { lines } = msg;
-            for (const line in lines) {
+            for (const line of lines) {
                 console.error(line);
             }
         } else if (msg.type === "SwitchedSession") {
@@ -309,7 +309,7 @@ export function setupResizeHandler(
         term.resize(cols, rows);
 
         const wsControl = getWsControl();
-        if (wsControl) {
+        if (wsControl && wsControl.readyState === WebSocket.OPEN) {
             wsControl.send(
                 JSON.stringify({
                     web_client_id: ownWebClientId,

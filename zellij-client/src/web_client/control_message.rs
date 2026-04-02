@@ -12,7 +12,7 @@ pub struct WebClientToWebServerControlMessage {
 #[serde(tag = "type")]
 pub enum WebClientToWebServerControlMessagePayload {
     TerminalResize(Size),
-    HeartbeatResponse { timestamp: u64 },
+    HeartbeatResponse,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

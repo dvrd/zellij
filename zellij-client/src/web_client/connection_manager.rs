@@ -115,7 +115,7 @@ impl ClientConnectionBus {
     }
 
     pub fn send_control(&mut self, message: WebServerToWebClientControlMessage) {
-        let message = Message::Text(serde_json::to_string(&message).unwrap().into());
+        let message = Message::Text(serde_json::to_string(&message).expect("WebServerToWebClientControlMessage serialization is infallible").into());
         match self.control_channel_tx.as_ref() {
             Some(control_channel_tx) => {
                 let _ = control_channel_tx.send(message);
@@ -194,9 +194,12 @@ impl ClientConnectionBus {
             .unwrap()
             .get_client_control_tx(&self.web_client_id)
         {
-            // Flush any messages that were buffered while the channel was unavailable
+            // Set the channel first so that any re-entrant send_control calls
+            // during the flush below see an available channel rather than None.
+            self.control_channel_tx = Some(control_channel_tx.clone());
+            // Flush any messages that were buffered while the channel was unavailable.
             if !self.pending_control_messages.is_empty() {
-                let pending = std::mem::take(&mut self.pending_control_messages);
+                let pending: Vec<_> = std::mem::take(&mut self.pending_control_messages);
                 log::info!(
                     "Control channel now available, flushing {} pending messages",
                     pending.len()
@@ -205,7 +208,6 @@ impl ClientConnectionBus {
                     let _ = control_channel_tx.send(msg);
                 }
             }
-            self.control_channel_tx = Some(control_channel_tx);
         }
     }
 
