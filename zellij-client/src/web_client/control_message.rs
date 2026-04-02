@@ -13,7 +13,7 @@ pub struct WebClientToWebServerControlMessage {
 pub enum WebClientToWebServerControlMessagePayload {
     TerminalResize(Size),
     TerminalMetrics(TerminalMetricsPayload),
-    HeartbeatResponse { timestamp: u64 },
+    HeartbeatResponse,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

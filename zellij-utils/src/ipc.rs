@@ -333,6 +333,7 @@ impl<T: Serialize> IpcSenderWithContext<T> {
 }
 
 /// Result of attempting to receive an IPC message.
+#[must_use]
 #[derive(Debug)]
 pub enum RecvResult<T> {
     /// Successfully received and decoded a message.
@@ -382,7 +383,8 @@ where
                     match io_err.kind() {
                         std::io::ErrorKind::UnexpectedEof
                         | std::io::ErrorKind::BrokenPipe
-                        | std::io::ErrorKind::ConnectionReset => RecvResult::StreamBroken,
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted => RecvResult::StreamBroken,
                         _ => RecvResult::UnknownMessage,
                     }
                 } else {
@@ -406,7 +408,8 @@ where
                     match io_err.kind() {
                         std::io::ErrorKind::UnexpectedEof
                         | std::io::ErrorKind::BrokenPipe
-                        | std::io::ErrorKind::ConnectionReset => RecvResult::StreamBroken,
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted => RecvResult::StreamBroken,
                         _ => RecvResult::UnknownMessage,
                     }
                 } else {
