@@ -24,9 +24,19 @@ pub fn render_to_client(
     mut client_channel_tx: SplitSink<WebSocket, Message>,
     cancellation_token: CancellationToken,
     should_not_reconnect: Arc<AtomicBool>,
+    mut protocol_rx: Option<UnboundedReceiver<Message>>,
 ) {
     tokio::spawn(async move {
         loop {
+            // Drain any pending protocol messages (e.g. Pong replies)
+            // before doing the main select so they are sent promptly.
+            if let Some(ref mut rx) = protocol_rx {
+                while let Ok(msg) = rx.try_recv() {
+                    if client_channel_tx.send(msg).await.is_err() {
+                        return;
+                    }
+                }
+            }
             tokio::select! {
                 biased;
                 _ = cancellation_token.cancelled() => {

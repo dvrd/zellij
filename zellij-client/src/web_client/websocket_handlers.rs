@@ -242,6 +242,10 @@ async fn handle_ws_control(
                     },
                 }
             },
+            Message::Ping(payload) => {
+                let _ = control_channel_tx.send(Message::Pong(payload));
+            },
+            Message::Pong(_) => {},
             Message::Close(_) => {
                 heartbeat_cancellation.cancel();
                 if let Some(handle) = pending_resize_abort.take() {
@@ -321,11 +325,14 @@ async fn handle_ws_terminal(
         .unwrap()
         .get_should_not_reconnect_flag(&web_client_id)
         .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    let (terminal_protocol_tx, terminal_protocol_rx) =
+        tokio::sync::mpsc::unbounded_channel::<Message>();
     render_to_client(
         stdout_channel_rx,
         client_terminal_channel_tx,
         terminal_channel_cancellation_token.clone(),
         should_not_reconnect,
+        Some(terminal_protocol_rx),
     );
     state
         .connection_table
@@ -386,6 +393,10 @@ async fn handle_ws_terminal(
                     explicitly_disable_kitty_keyboard_protocol,
                 );
             },
+            Message::Ping(payload) => {
+                let _ = terminal_protocol_tx.send(Message::Pong(payload));
+            },
+            Message::Pong(_) => {},
             Message::Close(_) => {
                 state
                     .connection_table
@@ -393,10 +404,6 @@ async fn handle_ws_terminal(
                     .unwrap()
                     .remove_client(&web_client_id);
                 break;
-            },
-            // TODO: support Message::Binary
-            _ => {
-                log::error!("Unsupported websocket msg type");
             },
         }
     }
