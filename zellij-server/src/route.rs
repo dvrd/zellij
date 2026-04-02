@@ -41,6 +41,18 @@ use crate::ClientId;
 
 const ACTION_COMPLETION_TIMEOUT: Duration = Duration::from_secs(1);
 
+fn web_client_attach_permissions(
+    is_web_client: bool,
+    allow_web_connections: bool,
+    client_requests_web_sharing: bool,
+) -> (bool, bool) {
+    let should_allow_connection =
+        !is_web_client || allow_web_connections || client_requests_web_sharing;
+    let should_share_current_session =
+        is_web_client && client_requests_web_sharing && !allow_web_connections;
+    (should_allow_connection, should_share_current_session)
+}
+
 #[derive(Debug, Clone)]
 pub struct ActionCompletionResult {
     pub exit_status: Option<i32>,
@@ -2517,8 +2529,30 @@ pub(crate) fn route_thread_main(
                                     s.as_ref().map(|s| s.web_sharing.web_clients_allowed())
                                 })
                                 .unwrap_or(false);
-                            let should_allow_connection = !is_web_client || allow_web_connections;
+                            // A web client that was spawned by the web server always includes
+                            // web_sharing = On in its configuration options. When it tries to attach
+                            // to an existing session that has web_sharing = Off (e.g. a session
+                            // originally created by a native terminal client), we enable sharing
+                            // for that session rather than rejecting the connection — the client
+                            // is already authenticated at the HTTP layer.
+                            let client_requests_web_sharing = is_web_client
+                                && cli_assets
+                                    .configuration_options
+                                    .as_ref()
+                                    .and_then(|o| o.web_sharing)
+                                    .map(|s| s.is_on())
+                                    .unwrap_or(false);
+                            let (should_allow_connection, should_share_current_session) =
+                                web_client_attach_permissions(
+                                    is_web_client,
+                                    allow_web_connections,
+                                    client_requests_web_sharing,
+                                );
                             if should_allow_connection {
+                                if should_share_current_session {
+                                    let _ = to_server
+                                        .send(ServerInstruction::ShareCurrentSession(client_id));
+                                }
                                 let attach_client_instruction = ServerInstruction::AttachClient(
                                     cli_assets,
                                     tab_position_to_focus,
@@ -3207,5 +3241,32 @@ mod tests {
         assert_eq!(cloned.affected_tab_id, Some(99));
         // But channel should be None (as per the Clone implementation comment)
         assert!(cloned.channel.is_none());
+    }
+
+    #[test]
+    fn web_client_attach_permissions_allows_authenticated_web_client_to_enable_sharing() {
+        let (should_allow_connection, should_share_current_session) =
+            web_client_attach_permissions(true, false, true);
+
+        assert!(should_allow_connection);
+        assert!(should_share_current_session);
+    }
+
+    #[test]
+    fn web_client_attach_permissions_rejects_web_client_when_sharing_is_off_and_not_requested() {
+        let (should_allow_connection, should_share_current_session) =
+            web_client_attach_permissions(true, false, false);
+
+        assert!(!should_allow_connection);
+        assert!(!should_share_current_session);
+    }
+
+    #[test]
+    fn web_client_attach_permissions_does_not_reshare_when_web_connections_are_already_allowed() {
+        let (should_allow_connection, should_share_current_session) =
+            web_client_attach_permissions(true, true, true);
+
+        assert!(should_allow_connection);
+        assert!(!should_share_current_session);
     }
 }
