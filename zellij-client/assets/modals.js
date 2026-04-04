@@ -23,8 +23,6 @@ function createModalStyles() {
   const style = document.createElement('style');
   style.id = 'modal-styles';
   style.textContent = `
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
-    
     .security-modal {
       position: fixed;
       top: 0;
