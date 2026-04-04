@@ -124,12 +124,20 @@ pub fn parse_stdin(
     os_input: Box<dyn ClientOsApi>,
     mouse_old_event: &mut MouseEvent,
     explicitly_disable_kitty_keyboard_protocol: bool,
-    kitty_parser: &mut KittyKeyboardParser,
+    _kitty_parser: &mut KittyKeyboardParser,
     input_parser: &mut InputParser,
 ) {
     if !explicitly_disable_kitty_keyboard_protocol {
-        match kitty_parser.parse(&buf) {
+        // Create a fresh parser for each message, matching the native CLI
+        // client in stdin_handler.rs.  The old code reused a single parser
+        // across messages, but KittyKeyboardParser is a one-shot state
+        // machine that never resets — after the first successful parse its
+        // state is stuck in DoneParsingWithU and every subsequent kitty
+        // sequence falls through to termwiz with is_kitty=false, causing
+        // raw CSI-u bytes to be written to the PTY.
+        match KittyKeyboardParser::new().parse(&buf) {
             Some(key_with_modifier) => {
+                log::debug!("[web-input] kitty parsed: {:?} from {:?}", key_with_modifier, buf);
                 os_input.send_to_server(ClientToServerMsg::Key {
                     key: key_with_modifier.clone(),
                     raw_bytes: buf.to_vec(),
@@ -137,7 +145,9 @@ pub fn parse_stdin(
                 });
                 return;
             },
-            None => {},
+            None => {
+                log::debug!("[web-input] kitty miss, termwiz fallback for {:?}", buf);
+            },
         }
     }
 
