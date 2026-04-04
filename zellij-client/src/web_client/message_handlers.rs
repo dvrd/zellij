@@ -186,9 +186,21 @@ pub fn render_to_client(
                 }
                 result = stdout_channel_rx.recv() => {
                     match result {
-                        Some(rendered_bytes) => {
+                        Some(first_chunk) => {
+                            // Batch: drain all pending render messages and
+                            // concatenate them into a single WebSocket frame.
+                            // This dramatically reduces framing overhead and
+                            // TCP flushes during high-throughput output
+                            // (e.g. `cat large_file`).
+                            let mut batch = first_chunk;
+                            while let Ok(more) = stdout_channel_rx.try_recv() {
+                                batch.push_str(&more);
+                            }
+                            // Send as Binary to skip UTF-8 validation on both
+                            // sides — terminal data is raw bytes with escape
+                            // sequences.  The JS client decodes via TextDecoder.
                             if client_channel_tx
-                                .send(Message::Text(rendered_bytes.into()))
+                                .send(Message::Binary(batch.into_bytes().into()))
                                 .await
                                 .is_err()
                             {
@@ -507,12 +519,14 @@ mod tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keyboard_parser::KittyKeyboardParser;
     use anyhow::Result;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
     use zellij_utils::{
         data::Palette,
         errors::ErrorContext,
+        vendored::termwiz::input::InputParser,
         ipc::{ClientToServerMsg, ServerToClientMsg},
         pane_size::Size,
     };
@@ -588,7 +602,9 @@ mod tests {
         let verification_handle = mock_os_input.clone();
         let mut mouse_old_event = MouseEvent::new();
 
-        parse_stdin(b"abc", Box::new(mock_os_input), &mut mouse_old_event, true);
+        let mut kitty_parser = KittyKeyboardParser::new();
+        let mut input_parser = InputParser::new();
+        parse_stdin(b"abc", Box::new(mock_os_input), &mut mouse_old_event, true, &mut kitty_parser, &mut input_parser);
 
         let messages = verification_handle.get_sent_messages();
         assert_eq!(messages.len(), 3);
