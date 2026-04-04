@@ -10,14 +10,13 @@ document.addEventListener("DOMContentLoaded", async (event) => {
     const { term, fitAddon } = initTerminal();
     const sessionName = location.pathname.split("/").pop();
 
-    let sendAnsiKey = (ansiKey) => {
-        // This will be replaced by the WebSocket module
-    };
-
-    setupInputHandlers(term, sendAnsiKey);
-
     document.title = sessionName;
-    const ws = initWebSockets(webClientId, sessionName, term, fitAddon, sendAnsiKey);
+    const ws = initWebSockets(webClientId, sessionName, term, fitAddon);
+
+    // Set up input handlers with the WebSocket send function.
+    // ws.sendAnsiKey is a no-op until the WebSocket connects
+    // (it checks ownWebClientId internally), so registering early is safe.
+    setupInputHandlers(term, ws.sendAnsiKey);
 
     // Initialize connection handlers with access to live WebSocket
     // instances so that visibilitychange can check socket liveness.
