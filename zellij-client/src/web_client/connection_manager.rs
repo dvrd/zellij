@@ -83,11 +83,13 @@ impl ConnectionTable {
     }
 
     pub fn remove_client(&mut self, client_id: &str) {
+        log::info!("Removing client '{}' from connection table", client_id);
         if let Some(mut client_channels) = self.client_id_to_channels.remove(client_id).take() {
             client_channels.cleanup();
         }
         self.client_read_only_status.remove(client_id);
         self.client_session_token_hash.remove(client_id);
+        log::debug!("Client '{}' fully removed from all connection tables", client_id);
     }
 
     pub fn get_should_not_reconnect_flag(&self, client_id: &str) -> Option<Arc<AtomicBool>> {
@@ -147,8 +149,10 @@ impl ClientConnectionBus {
             .map(|f| f.load(std::sync::atomic::Ordering::Relaxed))
             .unwrap_or(false);
         let code = if should_not_reconnect {
+            log::info!("Closing connection for client '{}' with code 4001 (do not reconnect)", self.web_client_id);
             4001u16
         } else {
+            log::info!("Closing connection for client '{}' with normal code", self.web_client_id);
             axum::extract::ws::close_code::NORMAL
         };
         let close_frame = CloseFrame {
@@ -165,7 +169,7 @@ impl ClientConnectionBus {
                 if let Some(control_channel_tx) = self.control_channel_tx.as_ref() {
                     let _ = control_channel_tx.send(close_message);
                 } else {
-                    log::error!("Failed to send close message to client");
+                    log::error!("Failed to send close message to client '{}' - channel not available", self.web_client_id);
                 }
             },
         }
@@ -173,9 +177,11 @@ impl ClientConnectionBus {
             .lock()
             .unwrap()
             .remove_client(&self.web_client_id);
+        log::debug!("Client '{}' removed from connection table", self.web_client_id);
     }
 
     pub fn close_connection_kicked(&mut self) {
+        log::info!("Client '{}' was kicked - setting should_not_reconnect flag", self.web_client_id);
         if let Some(flag) = self
             .connection_table
             .lock()
