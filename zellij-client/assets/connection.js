@@ -100,14 +100,41 @@ export async function handleReconnection() {
 
 /**
  * Initialize connection handlers and event listeners
+ * @param {function} [getWebSockets] - Optional function returning { wsTerminal, wsControl } for liveness checks
  */
-export function initConnectionHandlers() {
+export function initConnectionHandlers(getWebSockets) {
     window.addEventListener("beforeunload", () => {
         isPageUnloading = true;
     });
 
     window.addEventListener("pagehide", () => {
         isPageUnloading = true;
+    });
+
+    // Detect system wake / tab becoming visible again.
+    // Browsers throttle or pause WebSocket activity for hidden tabs and
+    // during system sleep.  When the tab becomes visible we proactively
+    // check whether the sockets are still alive and trigger reconnection
+    // if they are not.
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState !== "visible" || isPageUnloading) {
+            return;
+        }
+        if (!hasConnectedBefore) {
+            return;
+        }
+        if (getWebSockets) {
+            const sockets = getWebSockets();
+            const terminalDead =
+                sockets.wsTerminal &&
+                sockets.wsTerminal.readyState !== WebSocket.OPEN;
+            const controlDead =
+                sockets.wsControl &&
+                sockets.wsControl.readyState !== WebSocket.OPEN;
+            if (terminalDead || controlDead) {
+                handleReconnection();
+            }
+        }
     });
 }
 

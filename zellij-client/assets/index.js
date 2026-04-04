@@ -5,8 +5,6 @@ import { setupInputHandlers } from './input.js';
 import { initWebSockets } from './websockets.js';
 
 document.addEventListener("DOMContentLoaded", async (event) => {
-    initConnectionHandlers();
-
     const webClientId = await initAuthentication();
 
     const { term, fitAddon } = initTerminal();
@@ -19,5 +17,12 @@ document.addEventListener("DOMContentLoaded", async (event) => {
     setupInputHandlers(term, sendAnsiKey);
 
     document.title = sessionName;
-    initWebSockets(webClientId, sessionName, term, fitAddon, sendAnsiKey);
+    const ws = initWebSockets(webClientId, sessionName, term, fitAddon, sendAnsiKey);
+
+    // Initialize connection handlers with access to live WebSocket
+    // instances so that visibilitychange can check socket liveness.
+    initConnectionHandlers(() => ({
+        wsTerminal: ws.wsTerminal,
+        wsControl: ws.getWsControl(),
+    }));
 });
