@@ -26,13 +26,25 @@ export function initTerminal() {
     );
     term.options.linkHandler = linkHandler;
 
-    const webglAddon = new WebglAddon.WebglAddon();
+    let webglAddon = new WebglAddon.WebglAddon();
     term.loadAddon(fitAddon);
     term.loadAddon(clipboardAddon);
     term.loadAddon(webLinksAddon);
     webglAddon.onContextLoss((e) => {
-        // TODO: reload, or?
+        // WebGL context is frequently lost after system sleep or GPU
+        // resource pressure.  Dispose the old addon and try to create a
+        // fresh one so the terminal keeps GPU-accelerated rendering.
         webglAddon.dispose();
+        try {
+            webglAddon = new WebglAddon.WebglAddon();
+            webglAddon.onContextLoss(() => {
+                // Second loss — fall back to canvas renderer permanently.
+                webglAddon.dispose();
+            });
+            term.loadAddon(webglAddon);
+        } catch (_) {
+            // WebGL unavailable — canvas renderer will be used.
+        }
     });
     term.loadAddon(webglAddon);
     term.open(document.getElementById("terminal"));
