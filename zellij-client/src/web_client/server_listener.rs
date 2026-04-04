@@ -41,7 +41,7 @@ pub fn zellij_server_listener(
                     match build_initial_connection(session_name, &config) {
                         Ok(initial_session_connection) => initial_session_connection,
                         Err(e) => {
-                            log::error!("{}", e);
+                            log::error!("Failed to build initial connection: {} - disconnecting client", e);
                             return;
                         },
                     };
@@ -55,13 +55,20 @@ pub fn zellij_server_listener(
                             .and_then(|r| r.name.clone())
                             .or_else(generate_unique_session_name)
                         else {
-                            log::error!("Failed to generate unique session name, bailing.");
+                            log::error!("Failed to generate unique session name - disconnecting client");
+                            client_connection_bus.send_stdout(format!(
+                                "\u{1b}[2J\n\r\u{1b}[1;31mError: Failed to generate unique session name\u{1b}[0m\n"
+                            ));
                             client_connection_bus.close_connection();
                             return;
                         };
                         let mut sock_dir = zellij_utils::consts::ZELLIJ_SOCK_DIR.clone();
                         if let Err(e) = zellij_utils::sessions::validate_session_name(&session_name) {
-                            log::error!("Invalid session name: {}", e);
+                            log::error!("Invalid session name '{}': {} - disconnecting client", session_name, e);
+                            client_connection_bus.send_stdout(format!(
+                                "\u{1b}[2J\n\r\u{1b}[1;31mError: Invalid session name '{}'\u{1b}[0m\n\n{}",
+                                session_name, e
+                            ));
                             client_connection_bus.close_connection();
                             return;
                         }
@@ -103,7 +110,16 @@ pub fn zellij_server_listener(
                     let session_exists = session_manager.session_exists(&session_name).unwrap_or(false);
 
                     if is_read_only && !session_exists {
-                        log::error!("Read only tokens cannot create new sessions.");
+                        log::error!("Read-only token attempted to create new session '{}' - disconnecting client", session_name);
+                        client_connection_bus.send_stdout(format!(
+                            "\u{1b}[2J\n\r\u{1b}[1;33m╔════════════════════════════════════════════════════════════════╗\u{1b}[0m\n\
+                            \u{1b}[1;33m║\u{1b}[0m  \u{1b}[1mPermission Denied\u{1b}[0m                                              \u{1b}[1;33m║\u{1b}[0m\n\
+                            \u{1b}[1;33m╠════════════════════════════════════════════════════════════════╣\u{1b}[0m\n\
+                            \u{1b}[1;33m║\u{1b}[0m  Read-only tokens cannot create new sessions.                  \u{1b}[1;33m║\u{1b}[0m\n\
+                            \u{1b}[1;33m║\u{1b}[0m  Please use a full access token or connect to an existing     \u{1b}[1;33m║\u{1b}[0m\n\
+                            \u{1b}[1;33m║\u{1b}[0m  session.                                                      \u{1b}[1;33m║\u{1b}[0m\n\
+                            \u{1b}[1;33m╚════════════════════════════════════════════════════════════════╝\u{1b}[0m\n"
+                        ));
                         client_connection_bus.close_connection();
                         return;
                     }
@@ -119,7 +135,16 @@ pub fn zellij_server_listener(
                         &zellij_ipc_pipe,
                         first_message,
                     ) {
-                        log::error!("Failed to start session '{}': {}", session_name, e);
+                        log::error!("Failed to start session '{}': {} - disconnecting client", session_name, e);
+                        client_connection_bus.send_stdout(format!(
+                            "\u{1b}[2J\n\r\u{1b}[1;31m╔════════════════════════════════════════════════════════════════╗\u{1b}[0m\n\
+                            \u{1b}[1;31m║\u{1b}[0m  \u{1b}[1mFailed to Start Session\u{1b}[0m                                        \u{1b}[1;31m║\u{1b}[0m\n\
+                            \u{1b}[1;31m╠════════════════════════════════════════════════════════════════╣\u{1b}[0m\n\
+                            \u{1b}[1;31m║\u{1b}[0m  Could not start session '{}':                              \u{1b}[1;31m║\u{1b}[0m\n\
+                            \u{1b}[1;31m║\u{1b}[0m  {}                                                            \u{1b}[1;31m║\u{1b}[0m\n\
+                            \u{1b}[1;31m╚════════════════════════════════════════════════════════════════╝\u{1b}[0m\n",
+                            session_name, e
+                        ));
                         client_connection_bus.close_connection();
                         return;
                     }
@@ -273,7 +298,15 @@ pub fn zellij_server_listener(
                             },
                             None => {
                                 if unknown_message_count >= 1000 {
-                                    log::error!("Error: Received more than 1000 consecutive unknown server messages, disconnecting.");
+                                    log::error!("Received more than 1000 consecutive unknown server messages from session '{}' - disconnecting client to prevent CPU spike", session_name);
+                                    client_connection_bus.send_stdout(format!(
+                                        "\u{1b}[2J\n\r\u{1b}[1;31m╔════════════════════════════════════════════════════════════════╗\u{1b}[0m\n\
+                                        \u{1b}[1;31m║\u{1b}[0m  \u{1b}[1mConnection Error\u{1b}[0m                                               \u{1b}[1;31m║\u{1b}[0m\n\
+                                        \u{1b}[1;31m╠════════════════════════════════════════════════════════════════╣\u{1b}[0m\n\
+                                        \u{1b}[1;31m║\u{1b}[0m  Received invalid data from server.                           \u{1b}[1;31m║\u{1b}[0m\n\
+                                        \u{1b}[1;31m║\u{1b}[0m  The connection has been closed to prevent system overload.   \u{1b}[1;31m║\u{1b}[0m\n\
+                                        \u{1b}[1;31m╚════════════════════════════════════════════════════════════════╝\u{1b}[0m\n"
+                                    ));
                                     // this probably means we're in an infinite loop, let's
                                     // disconnect so as not to cause 100% CPU
                                     break;
@@ -292,28 +325,114 @@ pub fn zellij_server_listener(
 fn handle_exit_reason(client_connection_bus: &mut ClientConnectionBus, exit_reason: ExitReason) {
     match exit_reason {
         ExitReason::KickedByHost => {
+            log::info!("Client disconnected: Kicked by host - another client forced disconnection");
+            client_connection_bus.send_stdout(format!(
+                "\u{1b}[2J\n\r\u{1b}[1;31m╔════════════════════════════════════════════════════════════════╗\u{1b}[0m\n\
+                \u{1b}[1;31m║\u{1b}[0m  \u{1b}[1mDisconnected\u{1b}[0m                                                   \u{1b}[1;31m║\u{1b}[0m\n\
+                \u{1b}[1;31m╠════════════════════════════════════════════════════════════════╣\u{1b}[0m\n\
+                \u{1b}[1;31m║\u{1b}[0m  You were disconnected by another client (kicked by host).     \u{1b}[1;31m║\u{1b}[0m\n\
+                \u{1b}[1;31m║\u{1b}[0m  Another user or process forced your disconnection.            \u{1b}[1;31m║\u{1b}[0m\n\
+                \u{1b}[1;31m╚════════════════════════════════════════════════════════════════╝\u{1b}[0m\n"
+            ));
             client_connection_bus.close_connection_kicked();
             return;
         },
         ExitReason::WebClientsForbidden => {
+            log::info!("Client disconnected: Web clients are not allowed in this session");
             client_connection_bus.send_stdout(format!(
-                "\u{1b}[2J\n Web Clients are not allowed to attach to this session."
+                "\u{1b}[2J\n\r\u{1b}[1;33m╔════════════════════════════════════════════════════════════════╗\u{1b}[0m\n\
+                \u{1b}[1;33m║\u{1b}[0m  \u{1b}[1mAccess Denied\u{1b}[0m                                                  \u{1b}[1;33m║\u{1b}[0m\n\
+                \u{1b}[1;33m╠════════════════════════════════════════════════════════════════╣\u{1b}[0m\n\
+                \u{1b}[1;33m║\u{1b}[0m  Web clients are not allowed to attach to this session.        \u{1b}[1;33m║\u{1b}[0m\n\
+                \u{1b}[1;33m║\u{1b}[0m  The session owner has disabled web access.                    \u{1b}[1;33m║\u{1b}[0m\n\
+                \u{1b}[1;33m╚════════════════════════════════════════════════════════════════╝\u{1b}[0m\n"
             ));
         },
         ExitReason::Error(e) => {
+            log::error!("Client disconnected due to server error: {}", e);
             let goto_start_of_last_line = format!("\u{1b}[{};{}H", 1, 1);
             let clear_client_terminal_attributes = "\u{1b}[?1l\u{1b}=\u{1b}[r\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1003l\u{1b}[?1005l\u{1b}[?1006l\u{1b}[?12l";
             let disable_mouse = "\u{1b}[?1006l\u{1b}[?1015l\u{1b}[?1003l\u{1b}[?1002l\u{1b}[?1000l";
+            let error_message = format!(
+                "\u{1b}[2J\n\r\u{1b}[1;31m╔════════════════════════════════════════════════════════════════╗\u{1b}[0m\n\
+                \u{1b}[1;31m║\u{1b}[0m  \u{1b}[1mServer Error\u{1b}[0m                                                   \u{1b}[1;31m║\u{1b}[0m\n\
+                \u{1b}[1;31m╠════════════════════════════════════════════════════════════════╣\u{1b}[0m\n\
+                \u{1b}[1;31m║\u{1b}[0m  The server encountered an error and closed the connection.    \u{1b}[1;31m║\u{1b}[0m\n\
+                \u{1b}[1;31m╚════════════════════════════════════════════════════════════════╝\u{1b}[0m\n\n\
+                Error details:\n{}",
+                e.to_string().replace("\n", "\n\r")
+            );
             let error = format!(
-                "{}{}\n{}{}\n",
+                "{}{}\n\r{}\n",
                 disable_mouse,
                 clear_client_terminal_attributes,
                 goto_start_of_last_line,
-                e.to_string().replace("\n", "\n\r")
             );
-            client_connection_bus.send_stdout(format!("\u{1b}[2J\n{}", error));
+            client_connection_bus.send_stdout(format!("{}{}", error, error_message));
         },
-        _ => {},
+        ExitReason::Normal => {
+            log::info!("Client disconnected: Session ended normally");
+            client_connection_bus.send_stdout(format!(
+                "\u{1b}[2J\n\r\u{1b}[1;32m╔════════════════════════════════════════════════════════════════╗\u{1b}[0m\n\
+                \u{1b}[1;32m║\u{1b}[0m  \u{1b}[1mSession Ended\u{1b}[0m                                                  \u{1b}[1;32m║\u{1b}[0m\n\
+                \u{1b}[1;32m╠════════════════════════════════════════════════════════════════╣\u{1b}[0m\n\
+                \u{1b}[1;32m║\u{1b}[0m  The session has ended.                                       \u{1b}[1;32m║\u{1b}[0m\n\
+                \u{1b}[1;32m║\u{1b}[0m  All panes and processes have been closed.                    \u{1b}[1;32m║\u{1b}[0m\n\
+                \u{1b}[1;32m╚════════════════════════════════════════════════════════════════╝\u{1b}[0m\n"
+            ));
+        },
+        ExitReason::NormalDetached => {
+            log::info!("Client disconnected: Session detached normally");
+            client_connection_bus.send_stdout(format!(
+                "\u{1b}[2J\n\r\u{1b}[1;34m╔════════════════════════════════════════════════════════════════╗\u{1b}[0m\n\
+                \u{1b}[1;34m║\u{1b}[0m  \u{1b}[1mSession Detached\u{1b}[0m                                               \u{1b}[1;34m║\u{1b}[0m\n\
+                \u{1b}[1;34m╠════════════════════════════════════════════════════════════════╣\u{1b}[0m\n\
+                \u{1b}[1;34m║\u{1b}[0m  You have been detached from the session.                     \u{1b}[1;34m║\u{1b}[0m\n\
+                \u{1b}[1;34m║\u{1b}[0m  The session is still running and can be reattached.          \u{1b}[1;34m║\u{1b}[0m\n\
+                \u{1b}[1;34m╚════════════════════════════════════════════════════════════════╝\u{1b}[0m\n"
+            ));
+        },
+        ExitReason::ForceDetached => {
+            log::info!("Client disconnected: Force detached by another client");
+            client_connection_bus.send_stdout(format!(
+                "\u{1b}[2J\n\r\u{1b}[1;33m╔════════════════════════════════════════════════════════════════╗\u{1b}[0m\n\
+                \u{1b}[1;33m║\u{1b}[0m  \u{1b}[1mForce Disconnected\u{1b}[0m                                             \u{1b}[1;33m║\u{1b}[0m\n\
+                \u{1b}[1;33m╠════════════════════════════════════════════════════════════════╣\u{1b}[0m\n\
+                \u{1b}[1;33m║\u{1b}[0m  Your session was detached by another client.                 \u{1b}[1;33m║\u{1b}[0m\n\
+                \u{1b}[1;33m║\u{1b}[0m  This can happen when another client connects with --force.   \u{1b}[1;33m║\u{1b}[0m\n\
+                \u{1b}[1;33m╚════════════════════════════════════════════════════════════════╝\u{1b}[0m\n"
+            ));
+        },
+        ExitReason::CannotAttach => {
+            log::warn!("Client disconnected: Cannot attach - session already attached to another client");
+            client_connection_bus.send_stdout(format!(
+                "\u{1b}[2J\n\r\u{1b}[1;33m╔════════════════════════════════════════════════════════════════╗\u{1b}[0m\n\
+                \u{1b}[1;33m║\u{1b}[0m  \u{1b}[1mCannot Attach\u{1b}[0m                                                  \u{1b}[1;33m║\u{1b}[0m\n\
+                \u{1b}[1;33m╠════════════════════════════════════════════════════════════════╣\u{1b}[0m\n\
+                \u{1b}[1;33m║\u{1b}[0m  This session is attached to another client.                  \u{1b}[1;33m║\u{1b}[0m\n\
+                \u{1b}[1;33m║\u{1b}[0m  Use the --force flag to force connect.                       \u{1b}[1;33m║\u{1b}[0m\n\
+                \u{1b}[1;33m╚════════════════════════════════════════════════════════════════╝\u{1b}[0m\n"
+            ));
+        },
+        ExitReason::Disconnect => {
+            log::warn!("Client disconnected: Buffer full - client processing too slow");
+            client_connection_bus.send_stdout(format!(
+                "\u{1b}[2J\n\r\u{1b}[1;31m╔════════════════════════════════════════════════════════════════╗\u{1b}[0m\n\
+                \u{1b}[1;31m║\u{1b}[0m  \u{1b}[1mConnection Lost\u{1b}[0m                                                \u{1b}[1;31m║\u{1b}[0m\n\
+                \u{1b}[1;31m╠════════════════════════════════════════════════════════════════╣\u{1b}[0m\n\
+                \u{1b}[1;31m║\u{1b}[0m  Your client lost connection to the server.                   \u{1b}[1;31m║\u{1b}[0m\n\
+                \u{1b}[1;31m║\u{1b}[0m  This usually happens when your terminal processes messages   \u{1b}[1;31m║\u{1b}[0m\n\
+                \u{1b}[1;31m║\u{1b}[0m  too slowly (high system load or slow network).               \u{1b}[1;31m║\u{1b}[0m\n\
+                \u{1b}[1;31m║\u{1b}[0m  Your session is still active. Try reconnecting.              \u{1b}[1;31m║\u{1b}[0m\n\
+                \u{1b}[1;31m╚════════════════════════════════════════════════════════════════╝\u{1b}[0m\n"
+            ));
+        },
+        ExitReason::CustomExitStatus(code) => {
+            log::info!("Client disconnected with custom exit status: {}", code);
+            client_connection_bus.send_stdout(format!(
+                "\u{1b}[2J\n\r\u{1b}[1mSession ended with exit code: {}\u{1b}[0m\n", code
+            ));
+        },
     }
     client_connection_bus.close_connection();
 }
