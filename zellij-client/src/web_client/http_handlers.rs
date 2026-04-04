@@ -147,13 +147,26 @@ pub async fn get_static_asset(AxumPath(path): AxumPath<String>) -> impl IntoResp
 
     match ASSETS_DIR.get_file(path) {
         None => (
-            [(header::CONTENT_TYPE, "text/html")],
+            [
+                (header::CONTENT_TYPE, "text/html"),
+                (header::CACHE_CONTROL, "no-cache"),
+            ],
             "Not Found".as_bytes(),
         ),
         Some(file) => {
             let ext = file.path().extension().and_then(|ext| ext.to_str());
             let mime_type = get_mime_type(ext);
-            ([(header::CONTENT_TYPE, mime_type)], file.contents())
+            // Assets are embedded at build time via include_dir! and are
+            // immutable for the lifetime of this binary.  A long
+            // Cache-Control lets browsers skip redundant fetches on
+            // reconnection / page reload.
+            (
+                [
+                    (header::CONTENT_TYPE, mime_type),
+                    (header::CACHE_CONTROL, "public, max-age=86400, immutable"),
+                ],
+                file.contents(),
+            )
         },
     }
 }
