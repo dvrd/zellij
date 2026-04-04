@@ -36,6 +36,10 @@ export function initWebSockets(
     const wsTerminalUrl = `${url}${queryString}`;
 
     wsTerminal = new WebSocket(wsTerminalUrl);
+    // Receive terminal data as binary for lower overhead.
+    wsTerminal.binaryType = "arraybuffer";
+
+    const textDecoder = new TextDecoder();
 
     wsTerminal.onopen = function () {
         markConnectionEstablished();
@@ -48,47 +52,53 @@ export function initWebSockets(
     };
 
     wsTerminal.onmessage = function (event) {
-        let data = event.data;
+        // Terminal data now arrives as Binary frames for lower overhead.
+        // Decode to string so we can inspect ANSI sequences; xterm.js
+        // accepts both strings and Uint8Array.
+        let data;
+        if (event.data instanceof ArrayBuffer) {
+            data = textDecoder.decode(event.data);
+        } else {
+            data = event.data;
+        }
 
-        if (typeof data === "string") {
-            // Handle ANSI title change sequences
-            const titleRegex = /\x1b\]0;([^\x07\x1b]*?)(?:\x07|\x1b\\)/g;
-            let match;
-            while ((match = titleRegex.exec(data)) !== null) {
-                document.title = match[1];
-            }
+        // Handle ANSI title change sequences
+        const titleRegex = /\x1b\]0;([^\x07\x1b]*?)(?:\x07|\x1b\\)/g;
+        let match;
+        while ((match = titleRegex.exec(data)) !== null) {
+            document.title = match[1];
+        }
 
-            if ((userConfig.blink || userConfig.style) && (
-                data.includes("\x1b[0 q") ||
-                data.includes("\x1b[1 q") ||
-                data.includes("\x1b[2 q") ||
-                data.includes("\x1b[3 q") ||
-                data.includes("\x1b[4 q") ||
-                data.includes("\x1b[5 q") ||
-                data.includes("\x1b[6 q")
-            )) {
-                data = data.replace(/\x1b\[([0-6]) q/g, (match, p1) => {
-                    const id = parseInt(p1);
+        if ((userConfig.blink || userConfig.style) && (
+            data.includes("\x1b[0 q") ||
+            data.includes("\x1b[1 q") ||
+            data.includes("\x1b[2 q") ||
+            data.includes("\x1b[3 q") ||
+            data.includes("\x1b[4 q") ||
+            data.includes("\x1b[5 q") ||
+            data.includes("\x1b[6 q")
+        )) {
+            data = data.replace(/\x1b\[([0-6]) q/g, (match, p1) => {
+                const id = parseInt(p1);
 
-                    // Decode app-requested blink and shape from DECSCUSR id
-                    // id 0 = reset-to-default (null = no preference)
-                    const appBlink = id === 0 ? null : (id % 2 === 1);
-                    const appShapes = [null, "block", "block", "underline", "underline", "bar", "bar"];
-                    const appShape  = appShapes[id];
+                // Decode app-requested blink and shape from DECSCUSR id
+                // id 0 = reset-to-default (null = no preference)
+                const appBlink = id === 0 ? null : (id % 2 === 1);
+                const appShapes = [null, "block", "block", "underline", "underline", "bar", "bar"];
+                const appShape  = appShapes[id];
 
-                    // Apply user overrides only for what was explicitly configured;
-                    // otherwise pass through the app's value (or fall back to term.options)
-                    const effectiveBlink = userConfig.blink ? term.options.cursorBlink
-                                                            : (appBlink !== null ? appBlink : term.options.cursorBlink);
-                    const effectiveShape = userConfig.style ? term.options.cursorStyle
-                                                            : (appShape !== null ? appShape : term.options.cursorStyle);
+                // Apply user overrides only for what was explicitly configured;
+                // otherwise pass through the app's value (or fall back to term.options)
+                const effectiveBlink = userConfig.blink ? term.options.cursorBlink
+                                                        : (appBlink !== null ? appBlink : term.options.cursorBlink);
+                const effectiveShape = userConfig.style ? term.options.cursorStyle
+                                                        : (appShape !== null ? appShape : term.options.cursorStyle);
 
-                    if (effectiveShape === "block")     return effectiveBlink ? "\x1b[1 q" : "\x1b[2 q";
-                    if (effectiveShape === "underline") return effectiveBlink ? "\x1b[3 q" : "\x1b[4 q";
-                    if (effectiveShape === "bar")       return effectiveBlink ? "\x1b[5 q" : "\x1b[6 q";
-                    return match;
-                });
-            }
+                if (effectiveShape === "block")     return effectiveBlink ? "\x1b[1 q" : "\x1b[2 q";
+                if (effectiveShape === "underline") return effectiveBlink ? "\x1b[3 q" : "\x1b[4 q";
+                if (effectiveShape === "bar")       return effectiveBlink ? "\x1b[5 q" : "\x1b[6 q";
+                return match;
+            });
         }
 
         term.write(data);
