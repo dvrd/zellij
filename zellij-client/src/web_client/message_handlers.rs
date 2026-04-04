@@ -251,8 +251,12 @@ pub fn parse_stdin(
     session: &mut StdinSession,
 ) {
     if !session.explicitly_disable_kitty_keyboard_protocol {
-        match session.kitty_parser.feed(buf) {
-            KittyParseOutcome::Complete(key_with_modifier) => {
+        // Create a fresh parser for each message: KittyKeyboardParser is a
+        // one-shot state machine that never resets — after the first
+        // successful parse it gets stuck and every subsequent kitty sequence
+        // falls through to termwiz.
+        match KittyKeyboardParser::new().parse(buf) {
+            Some(key_with_modifier) => {
                 os_input.send_to_server(ClientToServerMsg::Key {
                     key: key_with_modifier.clone(),
                     raw_bytes: buf.to_vec(),
@@ -260,7 +264,7 @@ pub fn parse_stdin(
                 });
                 return;
             },
-            KittyParseOutcome::Incomplete | KittyParseOutcome::NoMatch => {},
+            None => {},
         }
     }
 
