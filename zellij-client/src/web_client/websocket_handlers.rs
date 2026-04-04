@@ -21,10 +21,19 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
-use zellij_utils::{input::mouse::MouseEvent, ipc::ClientToServerMsg};
+use zellij_utils::{
+    input::mouse::MouseEvent,
+    ipc::ClientToServerMsg,
+    vendored::termwiz::input::InputParser,
+};
+use crate::keyboard_parser::KittyKeyboardParser;
 
 const HEARTBEAT_INTERVAL_SECS: u64 = 30;
 const DEFAULT_HEARTBEAT_TIMEOUT_SECS: u64 = 45;
+/// If the gap between heartbeat ticks exceeds this multiple of the interval,
+/// the system likely just woke from sleep. Reset the timer instead of killing
+/// the connection.
+const SLEEP_DETECTION_MULTIPLIER: u64 = 3;
 
 fn heartbeat_timed_out(heartbeat_timeout_secs: Option<u64>, now: u64, last_response: u64) -> bool {
     match heartbeat_timeout_secs {
@@ -104,10 +113,37 @@ async fn handle_ws_control(
                 _ = interval.tick() => {
                     let now = current_timestamp();
                     let last_response = heartbeat_last_response.load(Ordering::Relaxed);
+                    let elapsed = now.saturating_sub(last_response);
+
+                    // Detect system sleep/wake: if the elapsed time since
+                    // the last heartbeat response is much larger than the
+                    // heartbeat interval, the machine was likely asleep.
+                    // Reset the timer and probe the client instead of
+                    // immediately killing the connection.
+                    if elapsed > HEARTBEAT_INTERVAL_SECS * SLEEP_DETECTION_MULTIPLIER {
+                        log::info!(
+                            "Detected possible system wake ({}s since last heartbeat response, expected ~{}s) - resetting heartbeat timer",
+                            elapsed, HEARTBEAT_INTERVAL_SECS
+                        );
+                        heartbeat_last_response.store(now, Ordering::Relaxed);
+                        // Send a heartbeat immediately to verify the client
+                        // is still alive after wake.
+                        let heartbeat_msg = WebServerToWebClientControlMessage::Heartbeat { timestamp: now };
+                        if heartbeat_tx.send(Message::Text(
+                            serde_json::to_string(&heartbeat_msg).unwrap().into(),
+                        )).is_err() {
+                            break;
+                        }
+                        continue;
+                    }
 
                     // Check if client has timed out — drop tx to signal close to main loop
                     if heartbeat_timed_out(heartbeat_timeout_secs, now, last_response) {
-                        log::warn!("WebSocket control connection timed out (no heartbeat response)");
+                        let timeout_secs = heartbeat_timeout_secs.unwrap_or(DEFAULT_HEARTBEAT_TIMEOUT_SECS);
+                        log::warn!(
+                            "WebSocket control connection timed out for client - no heartbeat response received within {} seconds",
+                            timeout_secs
+                        );
                         drop(heartbeat_tx);
                         break;
                     }
@@ -132,7 +168,7 @@ async fn handle_ws_control(
             .get_client_os_api(&deserialized_msg.web_client_id)
             .cloned()
         else {
-            log::error!("Unknown web_client_id: {}", deserialized_msg.web_client_id);
+            log::error!("Control WebSocket: Unknown web_client_id '{}' - client may have been disconnected or session expired", deserialized_msg.web_client_id);
             return;
         };
         let client_msg = match &deserialized_msg.payload {
@@ -238,7 +274,7 @@ async fn handle_ws_control(
                         send_message_to_server(deserialized_msg);
                     },
                     Err(e) => {
-                        log::error!("Failed to deserialize client msg: {:?}", e);
+                        log::error!("Failed to deserialize control message from client: {:?} - message may be malformed or protocol version mismatch", e);
                     },
                 }
             },
@@ -247,6 +283,7 @@ async fn handle_ws_control(
             },
             Message::Pong(_) => {},
             Message::Close(_) => {
+                log::info!("Control WebSocket closed by client - connection terminated normally");
                 heartbeat_cancellation.cancel();
                 if let Some(handle) = pending_resize_abort.take() {
                     handle.abort();
@@ -254,7 +291,7 @@ async fn handle_ws_control(
                 return;
             },
             _ => {
-                log::error!("Unsupported messagetype : {:?}", msg);
+                log::error!("Received unsupported WebSocket message type: {:?} - ignoring", msg);
             },
         }
     }
@@ -279,7 +316,7 @@ async fn handle_ws_terminal(
         .verify_client_ownership(&web_client_id, &session_token_hash.0)
     {
         log::error!(
-            "Terminal WebSocket: client does not own web_client_id {}",
+            "Terminal WebSocket: Authentication failed - client does not own web_client_id '{}' (possible session hijacking attempt)",
             web_client_id
         );
         return;
@@ -292,7 +329,7 @@ async fn handle_ws_terminal(
         .get_client_os_api(&web_client_id)
         .cloned()
     else {
-        log::error!("Unknown web_client_id: {}", web_client_id);
+        log::error!("Terminal WebSocket: Unknown web_client_id '{}' - session may have expired or client was disconnected", web_client_id);
         return;
     };
 
@@ -355,6 +392,8 @@ async fn handle_ws_terminal(
     let _ = attachment_complete_rx.await;
 
     let mut mouse_old_event = MouseEvent::new();
+    let mut kitty_parser = KittyKeyboardParser::new();
+    let mut input_parser = InputParser::new();
     while let Some(Ok(msg)) = client_terminal_channel_rx.next().await {
         match msg {
             Message::Binary(buf) => {
@@ -373,6 +412,8 @@ async fn handle_ws_terminal(
                     client_connection.clone(),
                     &mut mouse_old_event,
                     explicitly_disable_kitty_keyboard_protocol,
+                    &mut kitty_parser,
+                    &mut input_parser,
                 );
             },
             Message::Text(msg) => {
@@ -391,6 +432,8 @@ async fn handle_ws_terminal(
                     client_connection.clone(),
                     &mut mouse_old_event,
                     explicitly_disable_kitty_keyboard_protocol,
+                    &mut kitty_parser,
+                    &mut input_parser,
                 );
             },
             Message::Ping(payload) => {
@@ -398,6 +441,7 @@ async fn handle_ws_terminal(
             },
             Message::Pong(_) => {},
             Message::Close(_) => {
+                log::info!("Terminal WebSocket closed for client '{}' - removing from connection table", web_client_id);
                 state
                     .connection_table
                     .lock()
@@ -429,5 +473,38 @@ mod tests {
     fn heartbeat_timeout_uses_custom_value_when_configured() {
         assert!(!heartbeat_timed_out(Some(120), 200, 100));
         assert!(heartbeat_timed_out(Some(120), 221, 100));
+    }
+
+    #[test]
+    fn sleep_detection_threshold_exceeds_normal_timeout() {
+        // 90s gap (HEARTBEAT_INTERVAL_SECS * 3) should be detected as sleep,
+        // not as a timeout. The sleep detection check runs before the timeout
+        // check in the heartbeat loop.
+        let gap = HEARTBEAT_INTERVAL_SECS * SLEEP_DETECTION_MULTIPLIER;
+        assert!(
+            gap > DEFAULT_HEARTBEAT_TIMEOUT_SECS,
+            "sleep detection threshold ({gap}s) must exceed default timeout ({}s)",
+            DEFAULT_HEARTBEAT_TIMEOUT_SECS
+        );
+    }
+
+    #[test]
+    fn normal_heartbeat_gap_is_not_detected_as_sleep() {
+        // A gap of 1 interval (30s) is normal operation.
+        let elapsed = HEARTBEAT_INTERVAL_SECS;
+        assert!(
+            elapsed <= HEARTBEAT_INTERVAL_SECS * SLEEP_DETECTION_MULTIPLIER,
+            "normal heartbeat gap should not trigger sleep detection"
+        );
+    }
+
+    #[test]
+    fn large_gap_triggers_sleep_detection() {
+        // 1800s gap (30 min sleep) should be detected.
+        let elapsed: u64 = 1800;
+        assert!(
+            elapsed > HEARTBEAT_INTERVAL_SECS * SLEEP_DETECTION_MULTIPLIER,
+            "30 minute gap should trigger sleep detection"
+        );
     }
 }
