@@ -11,7 +11,6 @@ import { getWebSocketBaseUrl } from "./utils.js";
  * @param {string} sessionName - Session name from URL
  * @param {Terminal} term - Terminal instance
  * @param {FitAddon} fitAddon - Terminal fit addon
- * @param {function} sendAnsiKey - Function to send ANSI key sequences
  * @returns {object} Object containing WebSocket instances and cleanup function
  */
 export function initWebSockets(
@@ -19,7 +18,6 @@ export function initWebSockets(
     sessionName,
     term,
     fitAddon,
-    sendAnsiKey
 ) {
     let ownWebClientId = "";
     let wsTerminal;
@@ -112,8 +110,9 @@ export function initWebSockets(
         }
     };
 
-    // Update sendAnsiKey to use the actual WebSocket
-    sendAnsiKey = (ansiKey) => {
+    // Create the send function that writes to the terminal WebSocket.
+    // Safe to call before onopen — the ownWebClientId guard prevents premature sends.
+    const sendAnsiKey = (ansiKey) => {
         if (ownWebClientId !== "") {
             wsTerminal.send(ansiKey);
         }
