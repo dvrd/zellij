@@ -339,9 +339,7 @@ fn handle_exit_reason(client_connection_bus: &mut ClientConnectionBus, exit_reas
             );
             let error = format!(
                 "{}{}\n\r{}\n",
-                disable_mouse,
-                clear_client_terminal_attributes,
-                goto_start_of_last_line,
+                disable_mouse, clear_client_terminal_attributes, goto_start_of_last_line,
             );
             client_connection_bus.send_stdout(format!("{}{}", error, error_message));
         },
@@ -379,7 +377,9 @@ fn handle_exit_reason(client_connection_bus: &mut ClientConnectionBus, exit_reas
             ));
         },
         ExitReason::CannotAttach => {
-            log::warn!("Client disconnected: Cannot attach - session already attached to another client");
+            log::warn!(
+                "Client disconnected: Cannot attach - session already attached to another client"
+            );
             client_connection_bus.send_stdout(format!(
                 "\u{1b}[2J\n\r\u{1b}[1;33m╔════════════════════════════════════════════════════════════════╗\u{1b}[0m\n\
                 \u{1b}[1;33m║\u{1b}[0m  \u{1b}[1mCannot Attach\u{1b}[0m                                                  \u{1b}[1;33m║\u{1b}[0m\n\
@@ -405,7 +405,8 @@ fn handle_exit_reason(client_connection_bus: &mut ClientConnectionBus, exit_reas
         ExitReason::CustomExitStatus(code) => {
             log::info!("Client disconnected with custom exit status: {}", code);
             client_connection_bus.send_stdout(format!(
-                "\u{1b}[2J\n\r\u{1b}[1mSession ended with exit code: {}\u{1b}[0m\n", code
+                "\u{1b}[2J\n\r\u{1b}[1mSession ended with exit code: {}\u{1b}[0m\n",
+                code
             ));
         },
     }

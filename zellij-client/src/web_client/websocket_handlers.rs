@@ -9,6 +9,7 @@ use crate::web_client::message_handlers::{
 use crate::web_client::server_listener::zellij_server_listener;
 use crate::web_client::types::{AppState, TerminalParams};
 
+use crate::keyboard_parser::KittyKeyboardParser;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -21,11 +22,8 @@ use std::sync::{atomic::AtomicBool, Arc};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use zellij_utils::{
-    input::mouse::MouseEvent,
-    ipc::ClientToServerMsg,
-    vendored::termwiz::input::InputParser,
+    input::mouse::MouseEvent, ipc::ClientToServerMsg, vendored::termwiz::input::InputParser,
 };
-use crate::keyboard_parser::KittyKeyboardParser;
 
 const HEARTBEAT_INTERVAL_SECS: u64 = 30;
 const DEFAULT_HEARTBEAT_TIMEOUT_SECS: u64 = 45;
@@ -284,7 +282,10 @@ async fn handle_ws_control(
                 return;
             },
             _ => {
-                log::error!("Received unsupported WebSocket message type: {:?} - ignoring", msg);
+                log::error!(
+                    "Received unsupported WebSocket message type: {:?} - ignoring",
+                    msg
+                );
             },
         }
     }
@@ -436,7 +437,10 @@ async fn handle_ws_terminal(
             },
             Message::Pong(_) => {},
             Message::Close(_) => {
-                log::info!("Terminal WebSocket closed for client '{}' - removing from connection table", web_client_id);
+                log::info!(
+                    "Terminal WebSocket closed for client '{}' - removing from connection table",
+                    web_client_id
+                );
                 state
                     .connection_table
                     .lock()
