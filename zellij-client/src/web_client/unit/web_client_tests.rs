@@ -2951,6 +2951,155 @@ mod web_client_tests {
         revoke_token("test_cli_skips_init").ok();
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+
+    /// Regression test for the keyboard bug reported with `zellij attach https://url/session`.
+    ///
+    /// The root cause was that `terminal_init_messages()` was sent to ALL
+    /// WebSocket terminal clients, including CLI remote-attach clients.  This
+    /// caused double-initialisation in the outer terminal (Ghostty):
+    ///
+    ///   - `\x1b[?1049h` (enter alternate screen) pushed twice
+    ///   - `\x1b[>1u`    (Kitty keyboard enable) pushed twice
+    ///   - `\x1b[?1000h…` (mouse-mode enable) activated Ghostty's mouse
+    ///     tracking, corrupting keyboard escape sequences (e.g. ctrl+l).
+    ///
+    /// This test verifies the complete round-trip:
+    ///   1. A CLI client connects with `?is_cli_client=true`
+    ///   2. The server does NOT send the double-init sequences
+    ///   3. Keyboard input (`ctrl+l` = \x0c) is correctly forwarded to the
+    ///      session as-is (not corrupted)
+    ///   4. Render output still reaches the client normally
+    #[tokio::test]
+    #[serial]
+    async fn test_cli_remote_attach_keyboard_not_corrupted() {
+        let (port, session_token, web_client_id, factory, server_handle) =
+            setup_server_with_session("test_kbd_not_corrupted").await;
+
+        // ── Control channel ──────────────────────────────────────────────
+        let control_ws_url = format!("ws://127.0.0.1:{}/ws/control", port);
+        let (control_ws, _) = timeout(
+            Duration::from_secs(5),
+            connect_async_with_cookie(&control_ws_url, &session_token),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (mut control_sink, mut control_stream) = control_ws.split();
+        let _cfg = timeout(Duration::from_secs(2), control_stream.next()).await;
+        control_sink
+            .send(Message::Text(
+                serde_json::to_string(&WebClientToWebServerControlMessage {
+                    web_client_id: web_client_id.clone(),
+                    payload: WebClientToWebServerControlMessagePayload::TerminalResize(
+                        Size { rows: 24, cols: 80 },
+                    ),
+                })
+                .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        // ── Terminal channel — CLI path (`is_cli_client=true`) ────────────
+        let terminal_ws_url = format!(
+            "ws://127.0.0.1:{}/ws/terminal?web_client_id={}&is_cli_client=true",
+            port, web_client_id
+        );
+        let (terminal_ws, _) = timeout(
+            Duration::from_secs(5),
+            connect_async_with_cookie(&terminal_ws_url, &session_token),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (mut terminal_sink, mut terminal_stream) = terminal_ws.split();
+
+        // Wait until server-listener is ready.
+        wait_for_switched_session(&mut control_stream, Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // ── Simulate `ctrl+l` (\x0c) arriving from Ghostty ───────────────
+        // The CLI remote-attach path forwards raw stdin bytes via WebSocket.
+        // ctrl+l in Ghostty's Kitty-DISAMBIGUATE mode = \x0c (unambiguous).
+        terminal_sink
+            .send(Message::Binary(vec![0x0c].into()))
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // ── Verify the server received ctrl+l as-is ───────────────────────
+        // The key must arrive as KeyWithModifier { key: Char('l'), CTRL },
+        // raw_bytes = [0x0c], is_kitty = false.  We check via the mock API.
+        let ctrl_l_received = {
+            let mock_apis = factory.mock_apis.lock().unwrap();
+            mock_apis.iter().any(|(_, api)| {
+                api.get_sent_messages().iter().any(|msg| {
+                    matches!(
+                        msg,
+                        ClientToServerMsg::Key {
+                            raw_bytes,
+                            is_kitty_keyboard_protocol: false,
+                            ..
+                        } if raw_bytes == &[0x0c]
+                    )
+                })
+            })
+        };
+        assert!(
+            ctrl_l_received,
+            "ctrl+l (\\x0c) from CLI client must arrive at server as raw_bytes=[0x0c], is_kitty=false"
+        );
+
+        // ── Verify render output still reaches the CLI client ─────────────
+        {
+            let mock_apis = factory.mock_apis.lock().unwrap();
+            if let Some((_, api)) = mock_apis.iter().next() {
+                api.queue_server_message(ServerToClientMsg::Render {
+                    content: "HELLO_FROM_SESSION".to_string(),
+                });
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        {
+            let mock_apis = factory.mock_apis.lock().unwrap();
+            if let Some((_, api)) = mock_apis.iter().next() {
+                api.queue_server_message(ServerToClientMsg::Exit {
+                    exit_reason: zellij_utils::ipc::ExitReason::Normal,
+                });
+            }
+        }
+
+        let output = collect_terminal_output(&mut terminal_stream, Duration::from_secs(5)).await;
+        let output_str = String::from_utf8_lossy(&output);
+
+        // MUST NOT contain browser-only init sequences (the original bug).
+        assert!(
+            !output_str.contains("\x1b[?1049h"),
+            "CLI: must NOT get \\x1b[?1049h — would double-push alternate screen in Ghostty"
+        );
+        assert!(
+            !output_str.contains("\x1b[>1u"),
+            "CLI: must NOT get \\x1b[>1u — would double-push Kitty keyboard mode in Ghostty"
+        );
+        assert!(
+            !output_str.contains("\x1b[?1000h"),
+            "CLI: must NOT get \\x1b[?1000h — would corrupt Ghostty mouse/keyboard state"
+        );
+
+        // MUST still receive session render output.
+        assert!(
+            output_str.contains("HELLO_FROM_SESSION"),
+            "CLI: render output must still arrive. Got ({} bytes): {:?}",
+            output.len(),
+            &output_str[..output_str.len().min(200)]
+        );
+
+        let _ = terminal_sink.close().await;
+        let _ = control_sink.close().await;
+        server_handle.abort();
+        revoke_token("test_kbd_not_corrupted").ok();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 #[derive(Debug, Clone)]
