@@ -137,7 +137,11 @@ pub fn parse_stdin(
         // raw CSI-u bytes to be written to the PTY.
         match KittyKeyboardParser::new().parse(&buf) {
             Some(key_with_modifier) => {
-                log::info!("[web-input] kitty parsed: {:?} from {:?}", key_with_modifier, buf);
+                log::info!(
+                    "[web-input] kitty parsed: {:?} from {:?}",
+                    key_with_modifier,
+                    buf
+                );
                 os_input.send_to_server(ClientToServerMsg::Key {
                     key: key_with_modifier.clone(),
                     raw_bytes: buf.to_vec(),
@@ -236,9 +240,9 @@ mod tests {
     use zellij_utils::{
         data::Palette,
         errors::ErrorContext,
-        vendored::termwiz::input::InputParser,
         ipc::{ClientToServerMsg, ServerToClientMsg},
         pane_size::Size,
+        vendored::termwiz::input::InputParser,
     };
 
     #[derive(Debug, Clone)]
@@ -314,7 +318,14 @@ mod tests {
 
         let mut kitty_parser = KittyKeyboardParser::new();
         let mut input_parser = InputParser::new();
-        parse_stdin(b"abc", Box::new(mock_os_input), &mut mouse_old_event, true, &mut kitty_parser, &mut input_parser);
+        parse_stdin(
+            b"abc",
+            Box::new(mock_os_input),
+            &mut mouse_old_event,
+            true,
+            &mut kitty_parser,
+            &mut input_parser,
+        );
 
         let messages = verification_handle.get_sent_messages();
         assert_eq!(messages.len(), 3);

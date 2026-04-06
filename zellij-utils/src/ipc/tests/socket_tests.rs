@@ -113,10 +113,7 @@ fn client_to_server_message_over_socket() {
         IpcReceiverWithContext::new(stream);
 
     let msg = receiver.recv_client_msg();
-    assert!(
-        matches!(msg, RecvResult::Ok(_)),
-        "should receive a message"
-    );
+    assert!(matches!(msg, RecvResult::Ok(_)), "should receive a message");
     let RecvResult::Ok((msg, _ctx)) = msg else {
         unreachable!()
     };
@@ -147,10 +144,7 @@ fn server_to_client_message_over_socket() {
         IpcReceiverWithContext::new(stream);
 
     let msg = receiver.recv_server_msg();
-    assert!(
-        matches!(msg, RecvResult::Ok(_)),
-        "should receive a message"
-    );
+    assert!(matches!(msg, RecvResult::Ok(_)), "should receive a message");
     let RecvResult::Ok((msg, _ctx)) = msg else {
         unreachable!()
     };
@@ -363,7 +357,10 @@ fn session_probe_accepts_responding_socket() {
         let mut sender: IpcSenderWithContext<ServerToClientMsg> = receiver.get_sender();
 
         let msg = receiver.recv_client_msg();
-        assert!(matches!(msg, RecvResult::Ok((ClientToServerMsg::ConnStatus, _))));
+        assert!(matches!(
+            msg,
+            RecvResult::Ok((ClientToServerMsg::ConnStatus, _))
+        ));
 
         sender
             .send_server_msg(ServerToClientMsg::Connected)
