@@ -632,6 +632,13 @@ pub fn start_remote_client(
     let take_snapshot = "\u{1b}[?1049h";
     let bracketed_paste = "\u{1b}[?2004h";
     let enter_kitty_keyboard_mode = "\u{1b}[>1u";
+    // Enable mouse tracking so that scroll-wheel events are forwarded to the
+    // session as mouse escape sequences rather than being interpreted by the
+    // outer terminal as page-up / page-down (which caused Zellij to scroll
+    // through the pane scrollback on every wheel event).
+    // The local-attach path calls os_input.enable_mouse() from input_handler;
+    // for remote attach we must do it here because we own stdout directly.
+    let enable_mouse_mode = crate::os_input_output::ENABLE_MOUSE_SUPPORT;
     os_input.unset_raw_mode().unwrap();
 
     let _ = os_input
@@ -645,6 +652,10 @@ pub fn start_remote_client(
     let _ = os_input
         .get_stdout_writer()
         .write(enter_kitty_keyboard_mode.as_bytes())
+        .unwrap();
+    let _ = os_input
+        .get_stdout_writer()
+        .write(enable_mouse_mode.as_bytes())
         .unwrap();
 
     envs::set_zellij("0".to_string());
