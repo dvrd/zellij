@@ -2837,8 +2837,8 @@ mod web_client_tests {
         tokio::task::JoinHandle<()>,
     ) {
         let _ = delete_db();
-        let (auth_token, _) = create_token(Some(token_name.to_string()), false)
-            .expect("Failed to create test token");
+        let (auth_token, _) =
+            create_token(Some(token_name.to_string()), false).expect("Failed to create test token");
 
         let factory = Arc::new(MockClientOsApiFactory::new());
         let factory_clone = factory.clone();
@@ -2928,19 +2928,30 @@ mod web_client_tests {
                         Ok(WebServerToWebClientControlMessage::SwitchedSession { .. }) => {
                             eprintln!("[test] wait_for_switched_session: got SwitchedSession");
                             return true; // server-listener is ready
-                        }
-                        Ok(other) => eprintln!("[test] wait_for_switched_session: got {:?}, waiting...", std::mem::discriminant(other)),
+                        },
+                        Ok(other) => eprintln!(
+                            "[test] wait_for_switched_session: got {:?}, waiting...",
+                            std::mem::discriminant(other)
+                        ),
                         Err(e) => eprintln!("[test] wait_for_switched_session: parse error: {}", e),
                     }
-                }
+                },
                 Ok(Some(Ok(Message::Close(_)))) => {
                     eprintln!("[test] wait_for_switched_session: control WS CLOSED");
                     return false;
-                }
+                },
                 Ok(Some(Ok(msg))) => eprintln!("[test] wait_for_switched_session: got {:?}", msg),
-                Ok(Some(Err(e))) => { eprintln!("[test] wait_for_switched_session: error: {}", e); return false; }
-                Ok(None) => { eprintln!("[test] wait_for_switched_session: stream ended"); return false; }
-                Err(_) => { eprintln!("[test] wait_for_switched_session: timeout poll"); }
+                Ok(Some(Err(e))) => {
+                    eprintln!("[test] wait_for_switched_session: error: {}", e);
+                    return false;
+                },
+                Ok(None) => {
+                    eprintln!("[test] wait_for_switched_session: stream ended");
+                    return false;
+                },
+                Err(_) => {
+                    eprintln!("[test] wait_for_switched_session: timeout poll");
+                },
             }
         }
     }
@@ -3183,9 +3194,10 @@ mod web_client_tests {
             .send(Message::Text(
                 serde_json::to_string(&WebClientToWebServerControlMessage {
                     web_client_id: web_client_id.clone(),
-                    payload: WebClientToWebServerControlMessagePayload::TerminalResize(
-                        Size { rows: 24, cols: 80 },
-                    ),
+                    payload: WebClientToWebServerControlMessagePayload::TerminalResize(Size {
+                        rows: 24,
+                        cols: 80,
+                    }),
                 })
                 .unwrap(),
             ))

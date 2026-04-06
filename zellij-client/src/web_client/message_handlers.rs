@@ -533,9 +533,9 @@ mod tests {
     use zellij_utils::{
         data::Palette,
         errors::ErrorContext,
-        vendored::termwiz::input::InputParser,
         ipc::{ClientToServerMsg, ServerToClientMsg},
         pane_size::Size,
+        vendored::termwiz::input::InputParser,
     };
 
     #[derive(Debug, Clone)]
@@ -611,7 +611,14 @@ mod tests {
 
         let mut kitty_parser = KittyKeyboardParser::new();
         let mut input_parser = InputParser::new();
-        parse_stdin(b"abc", Box::new(mock_os_input), &mut mouse_old_event, true, &mut kitty_parser, &mut input_parser);
+        parse_stdin(
+            b"abc",
+            Box::new(mock_os_input),
+            &mut mouse_old_event,
+            true,
+            &mut kitty_parser,
+            &mut input_parser,
+        );
 
         let messages = verification_handle.get_sent_messages();
         assert_eq!(messages.len(), 3);
