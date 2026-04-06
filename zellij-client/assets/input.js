@@ -47,6 +47,24 @@ export function setupInputHandlers(term, sendFunction) {
                 encode_kitty_key(ev, sendFunction);
                 return false;
             }
+            // Some browsers intercept certain single-Ctrl shortcuts at the UI
+            // level (e.g. Ctrl+L focuses the address bar) before xterm.js can
+            // call preventDefault().  For any Ctrl-only key that maps to a
+            // classic ASCII control character we explicitly prevent the default
+            // browser action and send the raw control byte ourselves.
+            if (
+                ev.ctrlKey &&
+                !ev.altKey &&
+                !ev.shiftKey &&
+                !ev.metaKey &&
+                ev.key.length === 1 &&
+                ev.key >= 'a' && ev.key <= 'z'
+            ) {
+                ev.preventDefault();
+                const ctrl_byte = String.fromCharCode(ev.key.charCodeAt(0) - 96);
+                sendFunction(ctrl_byte);
+                return false;
+            }
             // workarounds for https://github.com/xtermjs/xterm.js/blob/41e8ae395937011d6bf6c7cb618b851791aed395/src/common/input/Keyboard.ts#L158
             if (ev.key == "ArrowLeft" && ev.altKey) {
                 ev.preventDefault();

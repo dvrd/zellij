@@ -303,12 +303,14 @@ impl Pane for TerminalPane {
             }
         } else {
             if self.grid.supports_kitty_keyboard_protocol {
+                log::info!("[pane-input] kitty_pane=true, is_kitty={}, raw={:?}", raw_input_bytes_are_kitty, &raw_input_bytes[..raw_input_bytes.len().min(20)]);
                 self.adjust_input_to_terminal_with_kitty_keyboard_protocol(
                     key_with_modifier,
                     raw_input_bytes,
                     raw_input_bytes_are_kitty,
                 )
             } else {
+                log::info!("[pane-input] kitty_pane=false, is_kitty={}, raw={:?}", raw_input_bytes_are_kitty, &raw_input_bytes[..raw_input_bytes.len().min(20)]);
                 self.adjust_input_to_terminal_without_kitty_keyboard_protocol(
                     key_with_modifier,
                     raw_input_bytes,

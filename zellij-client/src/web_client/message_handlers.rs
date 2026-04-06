@@ -257,6 +257,7 @@ pub fn parse_stdin(
         // falls through to termwiz.
         match KittyKeyboardParser::new().parse(buf) {
             Some(key_with_modifier) => {
+                log::debug!("[web-input] kitty parsed: {:?} from {:?}", key_with_modifier, buf);
                 os_input.send_to_server(ClientToServerMsg::Key {
                     key: key_with_modifier.clone(),
                     raw_bytes: buf.to_vec(),
@@ -264,7 +265,9 @@ pub fn parse_stdin(
                 });
                 return;
             },
-            None => {},
+            None => {
+                log::debug!("[web-input] kitty miss, termwiz fallback for {:?}", buf);
+            },
         }
     }
 

@@ -179,6 +179,11 @@ pub struct CreateClientIdResponse {
 #[derive(Deserialize)]
 pub struct TerminalParams {
     pub web_client_id: String,
+    /// Set to true by the CLI remote-attach client so the server skips sending
+    /// browser-only terminal init messages (alternate screen push, mouse-mode
+    /// enable, etc.) that would corrupt the outer terminal state.
+    #[serde(default)]
+    pub is_cli_client: bool,
 }
 
 #[derive(Deserialize)]

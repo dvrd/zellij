@@ -2822,6 +2822,328 @@ mod web_client_tests {
         server_handle.abort();
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+
+    // ── terminal_init_messages / is_cli_client ──────────────────────────────
+
+    /// Helper: spin up the server, login, create a session and return
+    /// (port, session_token, web_client_id, factory, server_handle).
+    async fn setup_server_with_session(
+        token_name: &str,
+    ) -> (
+        u16,
+        String,
+        String,
+        Arc<MockClientOsApiFactory>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let _ = delete_db();
+        let (auth_token, _) = create_token(Some(token_name.to_string()), false)
+            .expect("Failed to create test token");
+
+        let factory = Arc::new(MockClientOsApiFactory::new());
+        let factory_clone = factory.clone();
+        let session_manager = Arc::new(MockSessionManager::new());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let port = addr.port();
+        let temp_config_path = std::env::temp_dir().join(format!("{}_config.kdl", token_name));
+
+        let server_handle = tokio::spawn(async move {
+            serve_web_client(
+                Config::default(),
+                Options::default(),
+                Some(temp_config_path),
+                listener,
+                None,
+                Some(session_manager),
+                Some(factory_clone),
+                addr.ip(),
+                port,
+            )
+            .await;
+        });
+
+        wait_for_server(port, Duration::from_secs(5))
+            .await
+            .expect("Server failed to start");
+
+        let session_token = login_and_get_session_token(port, &auth_token).await;
+        let web_client_id = create_client_session(port, &session_token).await;
+
+        (port, session_token, web_client_id, factory, server_handle)
+    }
+
+    /// Collect all bytes the server sends on the terminal WebSocket until a
+    /// `ServerToClientMsg::Exit` is received (which closes the stream).  Returns
+    /// the concatenated payload so we can grep for specific escape sequences.
+    async fn collect_terminal_output(
+        terminal_stream: &mut futures::stream::SplitStream<
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+        >,
+        deadline: Duration,
+    ) -> Vec<u8> {
+        let mut buf: Vec<u8> = Vec::new();
+        let end = tokio::time::Instant::now() + deadline;
+        loop {
+            let remaining = end.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match timeout(remaining, terminal_stream.next()).await {
+                Ok(Some(Ok(Message::Text(t)))) => buf.extend_from_slice(t.as_bytes()),
+                Ok(Some(Ok(Message::Binary(b)))) => buf.extend_from_slice(&b),
+                Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Ok(Some(Err(_))) => break,
+                Ok(Some(Ok(_))) => {}, // ping/pong – ignore
+                Err(_) => break,       // outer timeout
+            }
+        }
+        buf
+    }
+
+    /// Wait on the control stream until we see a SwitchedSession message,
+    /// confirming the server-listener thread entered its receive loop.
+    /// Returns true if SwitchedSession was received, false on timeout/error.
+    async fn wait_for_switched_session(
+        control_stream: &mut futures::stream::SplitStream<
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+        >,
+        deadline: Duration,
+    ) -> bool {
+        let end = tokio::time::Instant::now() + deadline;
+        loop {
+            let remaining = end.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                eprintln!("[test] wait_for_switched_session: TIMED OUT");
+                return false;
+            }
+            match timeout(remaining, control_stream.next()).await {
+                Ok(Some(Ok(Message::Text(text)))) => {
+                    let parsed: Result<WebServerToWebClientControlMessage, _> =
+                        serde_json::from_str(&text);
+                    match &parsed {
+                        Ok(WebServerToWebClientControlMessage::SwitchedSession { .. }) => {
+                            eprintln!("[test] wait_for_switched_session: got SwitchedSession");
+                            return true; // server-listener is ready
+                        }
+                        Ok(other) => eprintln!("[test] wait_for_switched_session: got {:?}, waiting...", std::mem::discriminant(other)),
+                        Err(e) => eprintln!("[test] wait_for_switched_session: parse error: {}", e),
+                    }
+                }
+                Ok(Some(Ok(Message::Close(_)))) => {
+                    eprintln!("[test] wait_for_switched_session: control WS CLOSED");
+                    return false;
+                }
+                Ok(Some(Ok(msg))) => eprintln!("[test] wait_for_switched_session: got {:?}", msg),
+                Ok(Some(Err(e))) => { eprintln!("[test] wait_for_switched_session: error: {}", e); return false; }
+                Ok(None) => { eprintln!("[test] wait_for_switched_session: stream ended"); return false; }
+                Err(_) => { eprintln!("[test] wait_for_switched_session: timeout poll"); }
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_browser_client_receives_terminal_init_messages() {
+        let (port, session_token, web_client_id, factory, server_handle) =
+            setup_server_with_session("test_browser_init_msgs").await;
+
+        // Connect the control channel first so the server knows the terminal size.
+        let control_ws_url = format!("ws://127.0.0.1:{}/ws/control", port);
+        let (control_ws, _) = timeout(
+            Duration::from_secs(5),
+            connect_async_with_cookie(&control_ws_url, &session_token),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (mut control_sink, mut control_stream) = control_ws.split();
+        let _cfg_msg = timeout(Duration::from_secs(2), control_stream.next()).await;
+        let resize_msg = WebClientToWebServerControlMessage {
+            web_client_id: web_client_id.clone(),
+            payload: WebClientToWebServerControlMessagePayload::TerminalResize(Size {
+                rows: 30,
+                cols: 100,
+            }),
+        };
+        control_sink
+            .send(Message::Text(serde_json::to_string(&resize_msg).unwrap()))
+            .await
+            .unwrap();
+
+        // Connect the terminal channel WITHOUT is_cli_client (browser path).
+        let terminal_ws_url = format!(
+            "ws://127.0.0.1:{}/ws/terminal?web_client_id={}",
+            port, web_client_id
+        );
+        let (terminal_ws, _) = timeout(
+            Duration::from_secs(5),
+            connect_async_with_cookie(&terminal_ws_url, &session_token),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (_terminal_sink, mut terminal_stream) = terminal_ws.split();
+
+        // Wait for the SwitchedSession control message — this tells us the
+        // server-listener thread has successfully entered its receive loop and
+        // is ready to process server messages.  A small extra sleep gives the
+        // thread a chance to reach the recv_from_server() call.
+        wait_for_switched_session(&mut control_stream, Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Queue Render first, wait for render_to_client to forward it, then
+        // queue Exit.  This avoids the biased select! race in render_to_client
+        // where cancellation from Exit can fire before RENDER_CONTENT is sent.
+        {
+            let mock_apis = factory.mock_apis.lock().unwrap();
+            if let Some((_, api)) = mock_apis.iter().next() {
+                api.queue_server_message(ServerToClientMsg::Render {
+                    content: "RENDER_CONTENT".to_string(),
+                });
+            }
+        }
+        // Give render_to_client time to pick up and forward the render message
+        // before we trigger the cancellation via Exit.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        {
+            let mock_apis = factory.mock_apis.lock().unwrap();
+            if let Some((_, api)) = mock_apis.iter().next() {
+                api.queue_server_message(ServerToClientMsg::Exit {
+                    exit_reason: zellij_utils::ipc::ExitReason::Normal,
+                });
+            }
+        }
+
+        let output = collect_terminal_output(&mut terminal_stream, Duration::from_secs(5)).await;
+        let output_str = String::from_utf8_lossy(&output);
+
+        // Browser clients MUST receive the terminal init sequences.
+        assert!(
+            output_str.contains("\x1b[?1049h"),
+            "Browser client should receive enter-alternate-screen from terminal_init_messages()"
+        );
+        assert!(
+            output_str.contains("\x1b[>1u"),
+            "Browser client should receive enter-kitty-keyboard-mode from terminal_init_messages()"
+        );
+        // The actual render content must also arrive.
+        assert!(
+            output_str.contains("RENDER_CONTENT"),
+            "Browser client should receive render content"
+        );
+
+        let _ = control_sink.close().await;
+        server_handle.abort();
+        revoke_token("test_browser_init_msgs").ok();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_cli_client_skips_terminal_init_messages() {
+        let (port, session_token, web_client_id, factory, server_handle) =
+            setup_server_with_session("test_cli_skips_init").await;
+
+        // Control channel.
+        let control_ws_url = format!("ws://127.0.0.1:{}/ws/control", port);
+        let (control_ws, _) = timeout(
+            Duration::from_secs(5),
+            connect_async_with_cookie(&control_ws_url, &session_token),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (mut control_sink, mut control_stream) = control_ws.split();
+        let _cfg_msg = timeout(Duration::from_secs(2), control_stream.next()).await;
+        let resize_msg = WebClientToWebServerControlMessage {
+            web_client_id: web_client_id.clone(),
+            payload: WebClientToWebServerControlMessagePayload::TerminalResize(Size {
+                rows: 30,
+                cols: 100,
+            }),
+        };
+        control_sink
+            .send(Message::Text(serde_json::to_string(&resize_msg).unwrap()))
+            .await
+            .unwrap();
+
+        // Connect the terminal channel WITH is_cli_client=true (CLI remote-attach path).
+        let terminal_ws_url = format!(
+            "ws://127.0.0.1:{}/ws/terminal?web_client_id={}&is_cli_client=true",
+            port, web_client_id
+        );
+        let (terminal_ws, _) = timeout(
+            Duration::from_secs(5),
+            connect_async_with_cookie(&terminal_ws_url, &session_token),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (_terminal_sink, mut terminal_stream) = terminal_ws.split();
+
+        // Wait for the SwitchedSession control message — this tells us the
+        // server-listener thread has successfully entered its receive loop and
+        // is ready to process server messages.  A small extra sleep gives the
+        // thread a chance to reach the recv_from_server() call.
+        wait_for_switched_session(&mut control_stream, Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Queue Render first, wait for render_to_client to forward it, then
+        // queue Exit.  This avoids the biased select! race in render_to_client
+        // where cancellation from Exit can fire before RENDER_CONTENT is sent.
+        {
+            let mock_apis = factory.mock_apis.lock().unwrap();
+            if let Some((_, api)) = mock_apis.iter().next() {
+                api.queue_server_message(ServerToClientMsg::Render {
+                    content: "RENDER_CONTENT".to_string(),
+                });
+            }
+        }
+        // Give render_to_client time to pick up and forward the render message
+        // before we trigger the cancellation via Exit.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        {
+            let mock_apis = factory.mock_apis.lock().unwrap();
+            if let Some((_, api)) = mock_apis.iter().next() {
+                api.queue_server_message(ServerToClientMsg::Exit {
+                    exit_reason: zellij_utils::ipc::ExitReason::Normal,
+                });
+            }
+        }
+
+        let output = collect_terminal_output(&mut terminal_stream, Duration::from_secs(5)).await;
+        let output_str = String::from_utf8_lossy(&output);
+
+        // CLI clients must NOT receive the browser-only terminal init sequences.
+        assert!(
+            !output_str.contains("\x1b[?1049h"),
+            "CLI client must NOT receive enter-alternate-screen (would cause double alternate-screen push in Ghostty)"
+        );
+        assert!(
+            !output_str.contains("\x1b[>1u"),
+            "CLI client must NOT receive enter-kitty-keyboard-mode (would cause double Kitty mode push in Ghostty)"
+        );
+        assert!(
+            !output_str.contains("\x1b[?1000h"),
+            "CLI client must NOT receive mouse-mode enable (would corrupt Ghostty's mouse tracking state)"
+        );
+        // But render content still arrives.
+        assert!(
+            output_str.contains("RENDER_CONTENT"),
+            "CLI client should still receive render content. Got ({} bytes): {:?}",
+            output.len(),
+            &output_str[..output_str.len().min(300)]
+        );
+
+        let _ = control_sink.close().await;
+        server_handle.abort();
+        revoke_token("test_cli_skips_init").ok();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 #[derive(Debug, Clone)]

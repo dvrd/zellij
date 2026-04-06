@@ -30,6 +30,7 @@ pub fn zellij_server_listener(
     web_client_id: String,
     session_manager: Arc<dyn SessionManager>,
     attachment_complete_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    is_cli_client: bool,
 ) {
     let _server_listener_thread = std::thread::Builder::new()
         .name("server_listener".to_string())
@@ -191,8 +192,16 @@ pub fn zellij_server_listener(
                             },
                             Some(ServerToClientMsg::Render{content: bytes}) => {
                                 if !sent_init_messages {
-                                    for message in terminal_init_messages() {
-                                        client_connection_bus.send_stdout(message.to_owned())
+                                    // CLI clients (e.g. `zellij attach https://…`) set up
+                                    // their own outer terminal in start_remote_client().
+                                    // Sending browser-only init sequences (alternate screen
+                                    // push, mouse-mode enable, Kitty mode push) would cause
+                                    // double-initialisation and corrupt the terminal state,
+                                    // leading to broken keyboard escape sequences.
+                                    if !is_cli_client {
+                                        for message in terminal_init_messages() {
+                                            client_connection_bus.send_stdout(message.to_owned())
+                                        }
                                     }
                                     sent_init_messages = true;
                                 }
