@@ -300,6 +300,7 @@ async fn handle_ws_terminal(
     session_token_hash: SessionTokenHash,
 ) {
     let web_client_id = params.web_client_id;
+    let is_cli_client = params.is_cli_client;
 
     // Verify the session token owns this web_client_id
     if !state
@@ -346,6 +347,7 @@ async fn handle_ws_terminal(
         web_client_id.clone(),
         state.session_manager.clone(),
         Some(attachment_complete_tx),
+        is_cli_client,
     );
 
     let terminal_channel_cancellation_token = CancellationToken::new();
