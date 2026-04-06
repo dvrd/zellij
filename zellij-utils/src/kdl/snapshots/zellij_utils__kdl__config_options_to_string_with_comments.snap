@@ -277,6 +277,12 @@ web_sharing "disabled"
 // Default: 8082
 // (Requires restart)
 // web_server_port 8082
+// How long to wait for a web/remote client heartbeat response before closing the control connection
+// Set to 0 to disable the automatic timeout
+// Default: 45
+// (Requires restart)
+// 
+// web_heartbeat_timeout_secs 45
  
 // A command to run (will be wrapped with sh -c and provided the RESURRECT_COMMAND env variable) 
 // after Zellij attempts to discover a command inside a pane when resurrecting sessions, the STDOUT

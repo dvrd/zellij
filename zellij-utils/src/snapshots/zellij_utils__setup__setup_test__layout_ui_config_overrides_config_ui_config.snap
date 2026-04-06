@@ -6021,6 +6021,7 @@ Config {
         mouse_click_through: None,
         web_server_ip: None,
         web_server_port: None,
+        web_heartbeat_timeout_secs: None,
         web_server_cert: None,
         web_server_key: None,
         enforce_https_for_localhost: None,
