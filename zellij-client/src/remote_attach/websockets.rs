@@ -207,14 +207,14 @@ pub async fn establish_websocket_connections(
 
     let terminal_url = if session_name.is_empty() {
         format!(
-            "{}://{}{WS_TERMINAL_ENDPOINT}?web_client_id={}",
+            "{}://{}{WS_TERMINAL_ENDPOINT}?web_client_id={}&is_cli_client=true",
             ws_protocol,
             base_host,
             urlencoding::encode(web_client_id)
         )
     } else {
         format!(
-            "{}://{}{WS_TERMINAL_ENDPOINT}/{}?web_client_id={}",
+            "{}://{}{WS_TERMINAL_ENDPOINT}/{}?web_client_id={}&is_cli_client=true",
             ws_protocol,
             base_host,
             urlencoding::encode(session_name),
