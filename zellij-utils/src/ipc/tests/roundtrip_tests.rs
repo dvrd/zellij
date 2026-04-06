@@ -469,7 +469,9 @@ fn test_client_messages() {
                 advanced_mouse_actions: Some(true),
                 web_server_ip: Some("1.1.1.1".parse().unwrap()),
                 web_server_port: Some(8080),
-                web_heartbeat_timeout_secs: Some(45),
+                // web_heartbeat_timeout_secs is not in the IPC protobuf schema and
+                // therefore cannot survive a round-trip; it is intentionally None here.
+                web_heartbeat_timeout_secs: None,
                 web_server_cert: Some(PathBuf::from("web_server_cert")),
                 web_server_key: Some(PathBuf::from("web_server_key")),
                 enforce_https_for_localhost: Some(true),

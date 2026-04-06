@@ -673,6 +673,12 @@ pub fn start_remote_client(
         .write_all(ENABLE_HOST_THEME_NOTIFY.as_bytes())
         .unwrap();
     stdout.write_all(QUERY_HOST_THEME.as_bytes()).unwrap();
+    // Enable mouse tracking so that scroll-wheel events are forwarded to the
+    // session as mouse escape sequences rather than being interpreted by the
+    // outer terminal as page-up / page-down.
+    stdout
+        .write_all(crate::os_input_output::ENABLE_MOUSE_SUPPORT.as_bytes())
+        .unwrap();
 
     envs::set_zellij("0".to_string());
 
