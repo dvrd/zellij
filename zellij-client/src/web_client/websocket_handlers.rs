@@ -18,8 +18,11 @@ use axum::{
     response::IntoResponse,
 };
 use futures::StreamExt;
-use std::sync::{atomic::AtomicBool, Arc};
-use std::time::{Duration, Instant};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 use zellij_utils::{
     input::mouse::MouseEvent,
@@ -62,6 +65,13 @@ pub async fn ws_handler_terminal(
     ws.on_upgrade(move |socket| {
         handle_ws_terminal(socket, session_name, params, state, session_token_hash)
     })
+}
+
+fn current_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 async fn handle_ws_control(
