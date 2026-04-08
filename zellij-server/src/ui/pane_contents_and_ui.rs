@@ -230,7 +230,7 @@ impl<'a> PaneContentsAndUi<'a> {
             .collect();
         let pane_focused_for_differet_client = !other_focused_clients.is_empty();
 
-        let frame_color = self.frame_color(client_id, client_mode, session_is_mirrored);
+        let (frame_color, frame_title_color) = self.frame_color(client_id, client_mode, session_is_mirrored);
         let highlight_tooltip = self.pane.cached_hover_tooltip();
         let focused_client = if pane_focused_for_client_id {
             Some(client_id)
@@ -246,6 +246,7 @@ impl<'a> PaneContentsAndUi<'a> {
                 other_focused_clients: vec![],
                 style: self.style,
                 color: frame_color.map(|c| c.0),
+                title_color: frame_title_color,
                 other_cursors_exist_in_session: false,
                 pane_is_stacked_over: self.pane_is_stacked_over,
                 pane_is_stacked_under: self.pane_is_stacked_under,
@@ -266,6 +267,7 @@ impl<'a> PaneContentsAndUi<'a> {
                 other_focused_clients,
                 style: self.style,
                 color: frame_color.map(|c| c.0),
+                title_color: frame_title_color,
                 other_cursors_exist_in_session: self.multiple_users_exist_in_session,
                 pane_is_stacked_over: self.pane_is_stacked_over,
                 pane_is_stacked_under: self.pane_is_stacked_under,
@@ -306,7 +308,7 @@ impl<'a> PaneContentsAndUi<'a> {
         pane_is_on_top_of_stack: bool,
         pane_is_on_bottom_of_stack: bool,
     ) {
-        let color = self.frame_color(client_id, client_mode, session_is_mirrored);
+        let (color, _title_color) = self.frame_color(client_id, client_mode, session_is_mirrored);
         boundaries.add_rect(
             self.pane.as_ref(),
             color,
@@ -320,9 +322,10 @@ impl<'a> PaneContentsAndUi<'a> {
         client_id: ClientId,
         mode: InputMode,
         session_is_mirrored: bool,
-    ) -> Option<(PaletteColor, usize)> {
+    ) -> (Option<(PaletteColor, usize)>, Option<PaletteColor>) {
         // (color, color_precedence) (the color_precedence is used
         // for the no-pane-frames mode)
+        // Returns (border_color, title_color)
         let pane_focused_for_client_id = self.focused_clients.contains(&client_id);
         let pane_is_in_group = self
             .current_pane_group
@@ -330,15 +333,14 @@ impl<'a> PaneContentsAndUi<'a> {
             .map(|p| p.contains(&self.pane.pid()))
             .unwrap_or(false);
         if self.pane.frame_color_override().is_some() && !pane_is_in_group {
-            self.pane
-                .frame_color_override()
-                .map(|override_color| (override_color, 4))
+            let override_color = self.pane.frame_color_override();
+            (override_color.map(|c| (c, 4)), override_color)
         } else if pane_is_in_group && !pane_focused_for_client_id {
-            Some((self.style.colors.frame_highlight.emphasis_0, 2))
+            (Some((self.style.colors.frame_highlight.emphasis_0, 2)), None)
         } else if pane_is_in_group && pane_focused_for_client_id {
-            Some((self.style.colors.frame_highlight.emphasis_1, 3))
+            (Some((self.style.colors.frame_highlight.emphasis_1, 3)), None)
         } else if pane_focused_for_client_id {
-            match mode {
+            let border_color = match mode {
                 InputMode::Normal | InputMode::Locked => {
                     if session_is_mirrored || !self.multiple_users_exist_in_session {
                         Some((self.style.colors.frame_selected.base, 3))
@@ -351,17 +353,25 @@ impl<'a> PaneContentsAndUi<'a> {
                     }
                 },
                 _ => Some((self.style.colors.frame_highlight.base, 3)),
-            }
+            };
+            (border_color, None)
         } else if self
             .mouse_is_hovering_over_pane_for_clients
             .contains(&client_id)
         {
-            Some((self.style.colors.frame_highlight.base, 1))
+            (Some((self.style.colors.frame_highlight.base, 1)), None)
         } else {
-            self.style
+            let border_color = self
+                .style
                 .colors
                 .frame_unselected
-                .map(|frame| (frame.base, 0))
+                .map(|frame| (frame.base, 0));
+            let title_color = self
+                .style
+                .colors
+                .frame_unselected
+                .map(|frame| frame.emphasis_0);
+            (border_color, title_color)
         }
     }
 }

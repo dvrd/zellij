@@ -57,6 +57,7 @@ pub struct FrameParams {
     pub other_focused_clients: Vec<ClientId>,
     pub style: Style,
     pub color: Option<PaletteColor>,
+    pub title_color: Option<PaletteColor>,
     pub other_cursors_exist_in_session: bool,
     pub pane_is_stacked_under: bool,
     pub pane_is_stacked_over: bool,
@@ -76,6 +77,7 @@ pub struct PaneFrame {
     pub scroll_position: (usize, usize), // (position, length)
     pub style: Style,
     pub color: Option<PaletteColor>,
+    pub title_color: Option<PaletteColor>,
     pub focused_client: Option<ClientId>,
     pub is_main_client: bool,
     pub other_cursors_exist_in_session: bool,
@@ -107,6 +109,7 @@ impl PaneFrame {
             scroll_position,
             style: frame_params.style,
             color: frame_params.color,
+            title_color: frame_params.title_color,
             focused_client: frame_params.focused_client,
             is_main_client: frame_params.is_main_client,
             other_focused_clients: frame_params.other_focused_clients,
@@ -220,17 +223,17 @@ impl PaneFrame {
         let prefix_len = prefix.chars().count();
         if prefix_len + full_indication_len <= max_length {
             Some((
-                foreground_color(&format!("{}{}", prefix, full_indication), self.color),
+                foreground_color(&format!("{}{}", prefix, full_indication), self.title_color.or(self.color)),
                 prefix_len + full_indication_len,
             ))
         } else if full_indication_len <= max_length {
             Some((
-                foreground_color(&full_indication, self.color),
+                foreground_color(&full_indication, self.title_color.or(self.color)),
                 full_indication_len,
             ))
         } else if short_indication_len <= max_length {
             Some((
-                foreground_color(&short_indication, self.color),
+                foreground_color(&short_indication, self.title_color.or(self.color)),
                 short_indication_len,
             ))
         } else {
@@ -246,7 +249,7 @@ impl PaneFrame {
         let full_indication_len = full_indication.chars().count();
         if full_indication_len <= max_length {
             Some((
-                foreground_color(&full_indication, self.color),
+                foreground_color(&full_indication, self.title_color.or(self.color)),
                 full_indication_len,
             ))
         } else {
@@ -260,7 +263,7 @@ impl PaneFrame {
         let mut full_indication = vec![];
         full_indication.append(&mut left_separator);
         full_indication.push(EMPTY_TERMINAL_CHARACTER);
-        full_indication.append(&mut foreground_color(full_indication_text, self.color));
+        full_indication.append(&mut foreground_color(full_indication_text, self.title_color.or(self.color)));
         full_indication.push(EMPTY_TERMINAL_CHARACTER);
         full_indication.append(&mut right_separator);
         let full_indication_len = full_indication_text.width() + 4; // 2 for separators 2 for padding
@@ -268,7 +271,7 @@ impl PaneFrame {
         let mut short_indication = vec![];
         short_indication.append(&mut left_separator);
         short_indication.push(EMPTY_TERMINAL_CHARACTER);
-        short_indication.append(&mut foreground_color(short_indication_text, self.color));
+        short_indication.append(&mut foreground_color(short_indication_text, self.title_color.or(self.color)));
         short_indication.push(EMPTY_TERMINAL_CHARACTER);
         short_indication.append(&mut right_separator);
         let short_indication_len = short_indication_text.width() + 4; // 2 for separators 2 for padding
@@ -288,9 +291,9 @@ impl PaneFrame {
         let mut right_separator = foreground_color(boundary_type::VERTICAL_RIGHT, self.color);
         let full_indication_text = "MY FOCUS AND:";
         let short_indication_text = "+";
-        let mut full_indication = foreground_color(full_indication_text, self.color);
+        let mut full_indication = foreground_color(full_indication_text, self.title_color.or(self.color));
         let mut full_indication_len = full_indication_text.width();
-        let mut short_indication = foreground_color(short_indication_text, self.color);
+        let mut short_indication = foreground_color(short_indication_text, self.title_color.or(self.color));
         let mut short_indication_len = short_indication_text.width();
         for client_id in &self.other_focused_clients {
             let mut text = self.client_cursor(*client_id);
@@ -335,9 +338,9 @@ impl PaneFrame {
             "FOCUSED USERS:"
         };
         let middle_indication_text = "U:";
-        let mut full_indication = foreground_color(full_indication_text, self.color);
+        let mut full_indication = foreground_color(full_indication_text, self.title_color.or(self.color));
         let mut full_indication_len = full_indication_text.width();
-        let mut middle_indication = foreground_color(middle_indication_text, self.color);
+        let mut middle_indication = foreground_color(middle_indication_text, self.title_color.or(self.color));
         let mut middle_indication_len = middle_indication_text.width();
         let mut short_indication = vec![];
         let mut short_indication_len = 0;
@@ -420,7 +423,7 @@ impl PaneFrame {
         if max_length <= 6 || self.title.is_empty() {
             None
         } else if full_text.width() <= max_length {
-            Some((foreground_color(&full_text, self.color), full_text.width()))
+            Some((foreground_color(&full_text, self.title_color.or(self.color)), full_text.width()))
         } else {
             let length_of_each_half = (max_length - middle_truncated_sign.width()) / 2;
 
@@ -461,7 +464,7 @@ impl PaneFrame {
                     first_part.width() + middle_truncated_sign.width() + second_part.width(),
                 )
             };
-            Some((foreground_color(&title_left_side, self.color), title_length))
+            Some((foreground_color(&title_left_side, self.title_color.or(self.color)), title_length))
         }
     }
     fn three_part_title_line(
@@ -1180,5 +1183,109 @@ impl PaneFrame {
         ret.append(&mut foreground_color(&padding, self.color));
         ret.append(&mut right_boundary);
         ret
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zellij_utils::data::{Style, StyleDeclaration, Styling};
+
+    fn test_style() -> Style {
+        Style {
+            colors: Styling {
+                frame_unselected: Some(StyleDeclaration {
+                    base: PaletteColor::Rgb((60, 60, 80)),       // border color
+                    emphasis_0: PaletteColor::Rgb((140, 140, 160)), // title color
+                    emphasis_1: PaletteColor::Rgb((60, 60, 80)),
+                    emphasis_2: PaletteColor::Rgb((60, 60, 80)),
+                    emphasis_3: PaletteColor::Rgb((60, 60, 80)),
+                    background: PaletteColor::EightBit(0),
+                }),
+                ..Default::default()
+            },
+            rounded_corners: false,
+            hide_session_name: false,
+        }
+    }
+
+    fn make_frame_with_title(title: &str) -> PaneFrame {
+        PaneFrame::new(
+            Viewport {
+                x: 0,
+                y: 0,
+                rows: 3,
+                cols: 40,
+            },
+            (0, 0),
+            title.to_string(),
+            FrameParams {
+                focused_client: None,
+                is_main_client: false,
+                other_focused_clients: vec![],
+                style: test_style(),
+                color: Some(PaletteColor::Rgb((60, 60, 80))),        // border
+                title_color: Some(PaletteColor::Rgb((140, 140, 160))), // title
+                other_cursors_exist_in_session: false,
+                pane_is_stacked_under: false,
+                pane_is_stacked_over: false,
+                should_draw_pane_frames: true,
+                pane_is_floating: false,
+                content_offset: Offset::default(),
+                mouse_is_hovering_over_pane: false,
+                pane_is_selectable: true,
+                show_help_text: false,
+                highlight_tooltip: None,
+            },
+        )
+    }
+
+    #[test]
+    fn title_uses_title_color_not_border_color() {
+        let frame = make_frame_with_title("my-pane");
+        let rendered = frame.render().unwrap();
+        let (character_chunks, _vte) = rendered;
+
+        // Get the title row (first row = top)
+        let title_row = &character_chunks[0];
+        let characters = &title_row.terminal_characters;
+
+        // Find title characters ("my-pane") and verify they use title_color
+        let title_color = PaletteColor::Rgb((140, 140, 160));
+        let border_color = PaletteColor::Rgb((60, 60, 80));
+
+        let mut found_title_with_title_color = false;
+        let mut found_border_with_border_color = false;
+
+        for ch in characters {
+            if let Some(fg) = ch.styles.foreground {
+                if let AnsiCode::RgbCode(color) = fg {
+                    if ch.character == 'm' || ch.character == 'y' {
+                        // Title characters should have title_color
+                        if color == (140, 140, 160) {
+                            found_title_with_title_color = true;
+                        }
+                        assert_ne!(
+                            color, (60, 60, 80),
+                            "Title character '{}' should use title_color, not border_color",
+                            ch.character
+                        );
+                    }
+                }
+            }
+            // Border characters (corners, horizontal lines) should use border_color
+            if ch.character == '─' || ch.character == '│' || ch.character == '┌' || ch.character == '┐' {
+                if let Some(fg) = ch.styles.foreground {
+                    if let AnsiCode::RgbCode(color) = fg {
+                        if color == (60, 60, 80) {
+                            found_border_with_border_color = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(found_title_with_title_color, "No title character found with title_color");
+        assert!(found_border_with_border_color, "No border character found with border_color");
     }
 }
