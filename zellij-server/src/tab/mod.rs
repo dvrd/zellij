@@ -1518,7 +1518,20 @@ impl Tab {
                 direction: Some(direction),
                 borderless,
             } => {
-                if let Some(client_id) = client_id {
+                if self.floating_panes.panes_are_visible() {
+                    // When floating panes are visible, create a floating pane
+                    // (same behavior as NoPreference)
+                    self.new_no_preference_pane(
+                        pid,
+                        initial_pane_title,
+                        invoked_with,
+                        start_suppressed,
+                        should_focus_pane,
+                        client_id,
+                        blocking_notification,
+                        borderless,
+                    )?;
+                } else if let Some(client_id) = client_id {
                     if direction == Direction::Left || direction == Direction::Right {
                         self.vertical_split(
                             pid,
@@ -2365,7 +2378,7 @@ impl Tab {
         let err_context =
             || format!("failed to split pane {pid:?} horizontally for client {client_id}");
         if self.floating_panes.panes_are_visible() {
-            return Ok(());
+            self.hide_floating_panes();
         }
         self.close_down_to_max_terminals()
             .with_context(err_context)?;
@@ -2432,7 +2445,7 @@ impl Tab {
         let err_context =
             || format!("failed to split pane {pid:?} vertically for client {client_id}");
         if self.floating_panes.panes_are_visible() {
-            return Ok(());
+            self.hide_floating_panes();
         }
         self.close_down_to_max_terminals()
             .with_context(err_context)?;
@@ -5474,6 +5487,7 @@ impl Tab {
             resize_pty!(pane, self.os_api, self.senders, self.character_cell_size)
                 .with_context(err_context)?;
             self.floating_panes.add_pane(pane_id, pane);
+            self.set_should_clear_display_before_rendering();
             if should_focus_new_pane {
                 self.floating_panes.focus_pane_for_all_clients(pane_id);
             }

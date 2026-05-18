@@ -1562,6 +1562,99 @@ fn toggle_floating_panes_on() {
 }
 
 #[test]
+fn new_pane_with_direction_creates_floating_pane_when_floating_panes_visible() {
+    // Regression test: when floating panes are visible, directional NewPane
+    // (e.g. NewPane "Down") must create a floating pane rather than silently
+    // doing nothing or hiding the floating panes.
+    let size = Size {
+        cols: 121,
+        rows: 20,
+    };
+    let client_id = 1;
+    let mut tab = create_new_tab(size, ModeInfo::default());
+
+    // Start with 1 tiled pane
+    assert_eq!(tab.get_selectable_tiled_panes_count(), 1);
+    assert!(!tab.are_floating_panes_visible());
+
+    // Toggle floating panes on and create a floating pane
+    tab.toggle_floating_panes(Some(client_id), None, None)
+        .unwrap();
+    tab.new_pane(
+        PaneId::Terminal(2),
+        None,
+        None,
+        false,
+        true,
+        NewPanePlacement::default(),
+        Some(client_id),
+        None,
+    )
+    .unwrap();
+
+    assert!(tab.are_floating_panes_visible());
+    assert_eq!(tab.get_selectable_floating_panes_count(), 1);
+    assert_eq!(tab.get_selectable_tiled_panes_count(), 1);
+
+    // Now create a directional pane while floating panes are visible
+    // (simulates `NewPane "Right"` while in floating mode)
+    tab.new_pane(
+        PaneId::Terminal(3),
+        None,
+        None,
+        false,
+        true,
+        NewPanePlacement::Tiled {
+            direction: Some(Direction::Right),
+            borderless: None,
+        },
+        Some(client_id),
+        None,
+    )
+    .unwrap();
+
+    // Floating panes should stay visible with 2 panes now
+    assert!(tab.are_floating_panes_visible());
+    assert_eq!(tab.get_selectable_floating_panes_count(), 2);
+    assert_eq!(tab.get_selectable_tiled_panes_count(), 1);
+}
+
+#[test]
+fn new_pane_with_direction_creates_tiled_pane_when_floating_panes_hidden() {
+    // When floating panes are NOT visible, directional NewPane should still
+    // create a tiled pane normally.
+    let size = Size {
+        cols: 121,
+        rows: 20,
+    };
+    let client_id = 1;
+    let mut tab = create_new_tab(size, ModeInfo::default());
+
+    assert_eq!(tab.get_selectable_tiled_panes_count(), 1);
+    assert!(!tab.are_floating_panes_visible());
+
+    // Create a directional pane (simulates `NewPane "Down"`)
+    tab.new_pane(
+        PaneId::Terminal(2),
+        None,
+        None,
+        false,
+        true,
+        NewPanePlacement::Tiled {
+            direction: Some(Direction::Down),
+            borderless: None,
+        },
+        Some(client_id),
+        None,
+    )
+    .unwrap();
+
+    // Floating panes should still not be visible, tiled count increased
+    assert!(!tab.are_floating_panes_visible());
+    assert_eq!(tab.get_selectable_tiled_panes_count(), 2);
+}
+
+#[test]
 fn five_new_floating_panes() {
     let size = Size {
         cols: 121,
