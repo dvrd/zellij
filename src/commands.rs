@@ -833,6 +833,15 @@ pub(crate) fn start_client(opts: CliArgs) {
                     {
                         session_name.clone().map(start_client_plan);
                     }
+                    if let Ok(current_session) = std::env::var(envs::SESSION_NAME_ENV_KEY) {
+                        if session_name.as_deref() == Some(current_session.as_str()) {
+                            eprintln!(
+                                "You are trying to attach to the current session (\"{}\"). This is not supported.",
+                                current_session
+                            );
+                            process::exit(1);
+                        }
+                    }
                     match (session_name.as_ref(), resurrection_layout) {
                         (Some(session_name), Some(mut resurrection_layout)) if !session_exists => {
                             if force_run_commands {
@@ -855,7 +864,11 @@ pub(crate) fn start_client(opts: CliArgs) {
 
                 if let Ok(val) = std::env::var(envs::SESSION_NAME_ENV_KEY) {
                     if val == *client.get_session_name() {
-                        panic!("You are trying to attach to the current session (\"{}\"). This is not supported.", val);
+                        eprintln!(
+                            "You are trying to attach to the current session (\"{}\"). This is not supported.",
+                            val
+                        );
+                        process::exit(1);
                     }
                 }
 
