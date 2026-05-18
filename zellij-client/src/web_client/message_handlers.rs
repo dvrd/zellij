@@ -633,4 +633,41 @@ mod tests {
 
         assert_eq!(raw_bytes, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
     }
+
+    #[test]
+    fn parse_stdin_does_not_leak_escape_state_across_messages() {
+        let mock_os_input = MockClientOsApi::new();
+        let verification_handle = mock_os_input.clone();
+        let mut mouse_old_event = MouseEvent::new();
+
+        let mut kitty_parser = KittyKeyboardParser::new();
+        let mut input_parser = InputParser::new();
+        parse_stdin(
+            &[27],
+            Box::new(mock_os_input.clone()),
+            &mut mouse_old_event,
+            true,
+            &mut kitty_parser,
+            &mut input_parser,
+        );
+        parse_stdin(
+            b"qz",
+            Box::new(mock_os_input),
+            &mut mouse_old_event,
+            true,
+            &mut kitty_parser,
+            &mut input_parser,
+        );
+
+        let raw_bytes: Vec<Vec<u8>> = verification_handle
+            .get_sent_messages()
+            .into_iter()
+            .map(|msg| match msg {
+                ClientToServerMsg::Key { raw_bytes, .. } => raw_bytes,
+                other => panic!("expected key message, got: {:?}", other),
+            })
+            .collect();
+
+        assert_eq!(raw_bytes, vec![vec![27], b"q".to_vec(), b"z".to_vec()]);
+    }
 }

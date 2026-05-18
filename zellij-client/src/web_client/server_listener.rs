@@ -8,6 +8,7 @@ use crate::web_client::types::{ClientConnectionBus, ConnectionTable, SessionMana
 use crate::web_client::utils::terminal_init_messages;
 
 use std::{
+    borrow::Cow,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -205,7 +206,12 @@ pub fn zellij_server_listener(
                                     }
                                     sent_init_messages = true;
                                 }
-                                client_connection_bus.send_stdout(bytes);
+                                let bytes = if is_cli_client {
+                                    strip_outer_terminal_control_sequences_for_cli(&bytes)
+                                } else {
+                                    Cow::Owned(bytes)
+                                };
+                                client_connection_bus.send_stdout(bytes.into_owned());
                             },
                             Some(ServerToClientMsg::SwitchSession{connect_to_session}) => {
                                 reconnect_to_session = Some(connect_to_session);
@@ -329,6 +335,38 @@ pub fn zellij_server_listener(
                 }
             }
         });
+}
+
+fn strip_outer_terminal_control_sequences_for_cli(bytes: &str) -> Cow<'_, str> {
+    // Remote CLI attach already configures the user's outer terminal in
+    // start_remote_client(). If nested Zellij instances running inside the
+    // remote session emit their own outer-terminal setup/teardown sequences,
+    // forwarding those bytes to the local terminal corrupts the terminal's
+    // Kitty keyboard mode stack and can cause duplicated keystrokes.
+    if !bytes.contains("\u{1b}[>") && !bytes.contains("\u{1b}[<") && !bytes.contains("\u{1b}[?") {
+        return Cow::Borrowed(bytes);
+    }
+    let sequences_to_strip = [
+        "\u{1b}[>1u",                            // enable kitty keyboard mode
+        "\u{1b}[<1u",                            // disable kitty keyboard mode
+        "\u{1b}[?1049h",                         // enter alternate screen
+        "\u{1b}[?1049l",                         // leave alternate screen
+        "\u{1b}[?2004h",                         // enable bracketed paste
+        "\u{1b}[?2004l",                         // disable bracketed paste
+        "\u{1b}[?1000h", "\u{1b}[?1000l",       // mouse tracking
+        "\u{1b}[?1002h", "\u{1b}[?1002l",
+        "\u{1b}[?1003h", "\u{1b}[?1003l",
+        "\u{1b}[?1005h", "\u{1b}[?1005l",
+        "\u{1b}[?1006h", "\u{1b}[?1006l",
+        "\u{1b}[?1015h", "\u{1b}[?1015l",
+    ];
+    let mut filtered = bytes.to_owned();
+    for sequence in sequences_to_strip {
+        if filtered.contains(sequence) {
+            filtered = filtered.replace(sequence, "");
+        }
+    }
+    Cow::Owned(filtered)
 }
 
 fn handle_exit_reason(client_connection_bus: &mut ClientConnectionBus, exit_reason: ExitReason) {

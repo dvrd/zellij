@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
-use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::{tungstenite::protocol::WebSocketConfig, WebSocketStream};
 
 // -- MaybeTls stream enum -------------------------------------------------
 
@@ -153,6 +153,7 @@ async fn connect_ws(
     tls_config: Option<Arc<rustls::ClientConfig>>,
 ) -> Result<WebSocketStream<MaybeTls>, Box<dyn std::error::Error>> {
     let tcp_stream = TcpStream::connect((host, port)).await?;
+    tcp_stream.set_nodelay(true)?;
 
     let stream = if let Some(config) = tls_config {
         let connector = tokio_rustls::TlsConnector::from(config);
@@ -163,8 +164,12 @@ async fn connect_ws(
         MaybeTls::Plain(tcp_stream)
     };
 
+    let ws_config = WebSocketConfig {
+        write_buffer_size: 0,
+        ..WebSocketConfig::default()
+    };
     let (ws_stream, _response) =
-        tokio_tungstenite::client_async_with_config(request, stream, None).await?;
+        tokio_tungstenite::client_async_with_config(request, stream, Some(ws_config)).await?;
     Ok(ws_stream)
 }
 

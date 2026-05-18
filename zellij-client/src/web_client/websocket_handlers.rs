@@ -446,37 +446,17 @@ async fn handle_ws_terminal(
         };
         match msg {
             Message::Binary(buf) => {
-                let Some(client_connection) = state
-                    .connection_table
-                    .lock()
-                    .unwrap()
-                    .get_client_os_api(&web_client_id)
-                    .cloned()
-                else {
-                    log::error!("Unknown web_client_id: {}", web_client_id);
-                    continue;
-                };
                 parse_stdin(
                     &buf,
-                    client_connection.clone(),
+                    os_input.clone(),
                     &mut mouse_old_event,
                     &mut stdin_session,
                 );
             },
             Message::Text(msg) => {
-                let Some(client_connection) = state
-                    .connection_table
-                    .lock()
-                    .unwrap()
-                    .get_client_os_api(&web_client_id)
-                    .cloned()
-                else {
-                    log::error!("Unknown web_client_id: {}", web_client_id);
-                    continue;
-                };
                 parse_stdin(
                     msg.as_bytes(),
-                    client_connection.clone(),
+                    os_input.clone(),
                     &mut mouse_old_event,
                     &mut stdin_session,
                 );

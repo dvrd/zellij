@@ -3156,6 +3156,89 @@ mod web_client_tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn test_cli_client_strips_outer_terminal_control_sequences_from_render() {
+        let (port, session_token, web_client_id, factory, server_handle) =
+            setup_server_with_session("test_cli_strip_outer_term_sequences").await;
+
+        let control_ws_url = format!("ws://127.0.0.1:{}/ws/control", port);
+        let (control_ws, _) = timeout(
+            Duration::from_secs(5),
+            connect_async_with_cookie(&control_ws_url, &session_token),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (mut control_sink, mut control_stream) = control_ws.split();
+        let _cfg_msg = timeout(Duration::from_secs(2), control_stream.next()).await;
+        let resize_msg = WebClientToWebServerControlMessage {
+            web_client_id: web_client_id.clone(),
+            payload: WebClientToWebServerControlMessagePayload::TerminalResize(Size {
+                rows: 30,
+                cols: 100,
+            }),
+        };
+        control_sink
+            .send(Message::Text(serde_json::to_string(&resize_msg).unwrap()))
+            .await
+            .unwrap();
+
+        let terminal_ws_url = format!(
+            "ws://127.0.0.1:{}/ws/terminal?web_client_id={}&is_cli_client=true",
+            port, web_client_id
+        );
+        let (terminal_ws, _) = timeout(
+            Duration::from_secs(5),
+            connect_async_with_cookie(&terminal_ws_url, &session_token),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (_terminal_sink, mut terminal_stream) = terminal_ws.split();
+
+        wait_for_switched_session(&mut control_stream, Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        {
+            let mock_apis = factory.mock_apis.lock().unwrap();
+            if let Some((_, api)) = mock_apis.iter().next() {
+                api.queue_server_message(ServerToClientMsg::Render {
+                    content: format!(
+                        "prefix\x1b[>1u\x1b[?1049h\x1b[?2004h\x1b[?1000hbody\x1b[<1u\x1b[?1049l\x1b[?2004l\x1b[?1000lsuffix"
+                    ),
+                });
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        {
+            let mock_apis = factory.mock_apis.lock().unwrap();
+            if let Some((_, api)) = mock_apis.iter().next() {
+                api.queue_server_message(ServerToClientMsg::Exit {
+                    exit_reason: zellij_utils::ipc::ExitReason::Normal,
+                });
+            }
+        }
+
+        let output = collect_terminal_output(&mut terminal_stream, Duration::from_secs(5)).await;
+        let output_str = String::from_utf8_lossy(&output);
+
+        assert!(output_str.contains("prefixbodysuffix"));
+        assert!(!output_str.contains("\x1b[>1u"));
+        assert!(!output_str.contains("\x1b[<1u"));
+        assert!(!output_str.contains("\x1b[?1049h"));
+        assert!(!output_str.contains("\x1b[?1049l"));
+        assert!(!output_str.contains("\x1b[?2004h"));
+        assert!(!output_str.contains("\x1b[?2004l"));
+        assert!(!output_str.contains("\x1b[?1000h"));
+        assert!(!output_str.contains("\x1b[?1000l"));
+
+        let _ = control_sink.close().await;
+        server_handle.abort();
+        revoke_token("test_cli_strip_outer_term_sequences").ok();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
     /// Regression test for the keyboard bug reported with `zellij attach https://url/session`.
     ///
     /// The root cause was that `terminal_init_messages()` was sent to ALL
