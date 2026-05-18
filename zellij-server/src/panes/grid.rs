@@ -3305,6 +3305,7 @@ impl Grid {
     }
     pub fn unlock_renders(&mut self) {
         self.lock_renders = false;
+        self.mark_for_rerender();
     }
     pub fn update_theme(&mut self, theme: Styling) {
         self.style.colors = theme.clone();

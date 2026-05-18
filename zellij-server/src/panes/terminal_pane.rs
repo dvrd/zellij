@@ -374,10 +374,11 @@ impl Pane for TerminalPane {
                 return Ok(None);
             }
             match self.grid.render(content_x, content_y, &self.style) {
-                Ok(rendered_assets) => {
+                Ok(Some(rendered_assets)) => {
                     self.set_should_render(false);
-                    return Ok(rendered_assets);
+                    return Ok(Some(rendered_assets));
                 },
+                Ok(None) => return Ok(None),
                 e => return e,
             }
         } else {
